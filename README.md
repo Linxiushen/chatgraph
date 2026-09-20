@@ -4,7 +4,7 @@
 
 ![ChatGraph 工作区演示](chatgraph/docs/workspace.png)
 
-**0.2.0-beta.1** 提供 DeepSeek V4 Pro 结构化、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出，以及 Chrome/Edge 扩展和可选 ChatGPT MCP 组件。
+**0.2.0-beta.2** 提供 DeepSeek V4 Pro 结构化、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出，以及 Chrome/Edge 扩展和可选 ChatGPT MCP 组件。
 
 ## 本地运行
 
@@ -25,8 +25,8 @@ node chatgraph/server.mjs
 
 这是个人工作区测试版。ChatGPT 账号中的实际启用、平台商店审核、外网部署和真实用户研究须分别完成。模型结果仍应核对原文。
 
-## 基于 Archify 的开源扩展
+## 开源与许可
 
-保留 [Archify](https://github.com/tt-a1i/archify) 的 Git 历史、源代码与 MIT 许可。ChatGraph 新增代码位于 `chatgraph/`，交互式 HTML 导出复用上游模板、阅读器、中文本地化与公共工具。新增编辑器、对话模型、AI 分析和存储由 ChatGraph 实现。
+ChatGraph 使用 MIT 许可证。第三方来源、原始版权声明与复用范围见以下说明。
 
-[上游集成说明](chatgraph/UPSTREAM.md) · [原 Archify 项目介绍](ARCHIFY_README.md) · [ChatGraph MIT 许可证](chatgraph/LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)
+[上游与技术说明](chatgraph/UPSTREAM.md) · [MIT 许可证](chatgraph/LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)

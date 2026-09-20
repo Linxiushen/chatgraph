@@ -1,8 +1,8 @@
 {
   "name": "chatgraph",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "private": true,
-  "description": "Conversation knowledge workspace built on Archify",
+  "description": "Turn AI conversations into editable, source-linked knowledge maps",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=20" },

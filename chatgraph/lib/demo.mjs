@@ -10,8 +10,8 @@ export function createDemoGraph() {
     { id: 'demo-m4', role: 'assistant', content: '那可以把第一版定义为决策备忘录：最终判断、判断依据、放弃的建议、未解决的问题；每个判断都能点击查看对应原文。图谱用来展示这些内容的关系。' },
     { id: 'demo-m5', role: 'user', content: '我接受这个方向，但不能把 AI 的建议直接当成我的结论。只有我明确接受的才标成已确认；没有明确表态就保持待确认。' },
     { id: 'demo-m6', role: 'assistant', content: '接入上建议从复制粘贴开始，再增加 ChatGPT 官方组件与跨平台浏览器插件。官方组件能否获得足够完整的原文，需要先做技术验证。' },
-    { id: 'demo-m7', role: 'user', content: '可以。先让粘贴导入真正能用，ChatGPT 官方组件和浏览器插件共用一套核心。还有，能否基于 Archify 二开？这个项目的图做得很好，我们可以把图谱核心开源。' },
-    { id: 'demo-m8', role: 'assistant', content: 'Archify 的长处是把结构化数据渲染成可交互 HTML/SVG。我们还需要自己实现对话理解、原文引用和思维导图编辑。建议先验证这些能力是否让用户更容易找回判断。' },
+    { id: 'demo-m7', role: 'user', content: '可以。先让粘贴导入真正能用，ChatGPT 官方组件和浏览器插件共用一套核心。还有，我希望整理后的图谱能作为交互式网页分享，也可以导出矢量图继续使用。' },
+    { id: 'demo-m8', role: 'assistant', content: 'ChatGraph 可以提供可交互的分享网页和清晰的矢量图，同时保留原文引用，让接收者也能核查观点。建议先验证这些能力是否让用户更容易找回判断。' },
     { id: 'demo-m9', role: 'user', content: '第一步就做这个原型。找 10 位目标用户，各提供真实讨论，与原聊天窗口直接总结做对照。一周后看他们是否实际复用，并询问是否愿意为下一次整理付费。付费意愿现在还不知道。' },
   ];
   const node = (id, label, summary, type, stance, status, sourceIds, parentId = 'demo-root') => ({ id, label, summary, type, stance, status, sourceIds, parentId, note: '' });
@@ -25,7 +25,7 @@ export function createDemoGraph() {
     node('demo-evidence', '每个判断都能回到原文', '用可点击的引用让用户核查提取是否准确，并保留改变判断的上下文。', 'evidence', 'shared', 'confirmed', ['demo-m4', 'demo-m5']),
     node('demo-entry', '三个入口，共用一套核心', '先让粘贴导入可用，再扩展 ChatGPT 官方组件和浏览器插件。', 'action', 'user', 'confirmed', ['demo-m6', 'demo-m7']),
     node('demo-platform', '官方组件能取得多少原文？', '组件的实际对话范围尚待技术验证，不能预先承诺完整历史。', 'question', 'ai', 'open', ['demo-m6'], 'demo-entry'),
-    node('demo-archify', '用 Archify 承接交互式导出', '复用 HTML/SVG 渲染能力；对话理解、原文引用和编辑器仍需自行实现。', 'claim', 'ai', 'proposed', ['demo-m7', 'demo-m8']),
+    node('demo-archify', '让图谱成为可分享的知识', '提供交互式分享网页和矢量图，保留原文引用，方便继续阅读与复用。', 'claim', 'ai', 'proposed', ['demo-m7', 'demo-m8']),
     node('demo-test', '用真实复用行为验证付费需求', '找 10 位目标用户，对照原生总结。一周后回访实际复用，再测试下一次付费；当前付费意愿未知。', 'action', 'user', 'confirmed', ['demo-m9']),
   ];
   const edges = nodes.filter(item => item.parentId).map((item, index) => ({ id: `demo-contains-${index + 1}`, source: item.parentId, target: item.id, type: 'contains', label: '' }));
