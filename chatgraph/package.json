@@ -1,0 +1,17 @@
+{
+  "name": "chatgraph",
+  "version": "0.2.0-beta.1",
+  "private": true,
+  "description": "Conversation knowledge workspace built on Archify",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node scripts/browser-check.mjs && node test/editor-browser-check.mjs",
+    "test:live": "node scripts/evaluate-model.mjs --live",
+    "package": "node scripts/package-release.mjs"
+  }
+}

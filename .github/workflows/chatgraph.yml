@@ -1,0 +1,36 @@
+name: ChatGraph
+on:
+  push:
+    paths: ['chatgraph/**', '.github/workflows/chatgraph.yml']
+  pull_request:
+    paths: ['chatgraph/**', '.github/workflows/chatgraph.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test chatgraph/test/*.test.mjs
+      - run: node --test chatgraph/extension/test/*.test.mjs
+      - run: node scripts/generate-viewer.mjs --check
+      - run: npm --prefix chatgraph/integrations/chatgpt ci --ignore-scripts
+      - run: npm --prefix chatgraph/integrations/chatgpt test
+      - run: npm install --no-save --package-lock=false --prefix chatgraph playwright
+      - run: node chatgraph/node_modules/playwright/cli.js install --with-deps chromium
+      - run: npm run test:browser --prefix chatgraph
+        env:
+          CHATGRAPH_PLAYWRIGHT_PATH: ${{ github.workspace }}/chatgraph/node_modules/playwright/index.mjs
+      - run: node chatgraph/integrations/browser-check.mjs
+        env:
+          CHATGRAPH_PLAYWRIGHT_PATH: ${{ github.workspace }}/chatgraph/node_modules/playwright/index.mjs
+      - run: node chatgraph/scripts/package-release.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatgraph-beta
+          path: chatgraph/test-output/releases/

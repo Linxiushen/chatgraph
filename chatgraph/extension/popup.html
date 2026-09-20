@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ChatGraph 对话采集</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><span class="mark">◎</span><div><h1>带走这段思考</h1><p>ChatGraph · 对话采集</p></div></header>
+  <main>
+    <p id="status" role="status">点击采集，预览当前页面已加载的对话。</p>
+    <button id="capture" class="primary">采集当前对话</button>
+    <section id="result" hidden>
+      <label for="title">对话标题</label><input id="title" maxlength="240">
+      <p id="source"></p><ul id="warnings" class="notice"></ul>
+      <div class="bar"><strong id="count"></strong><button id="select-all" class="text">全选</button></div>
+      <div id="messages"></div>
+      <div class="actions"><button id="copy">复制 JSON</button><button id="download">下载 JSON</button></div>
+      <button id="send" class="primary">发送到本机 ChatGraph</button>
+      <p class="help">发送后会打开本机导入预览，由你选择整理方式。地址：127.0.0.1:4317。</p>
+    </section>
+    <footer>仅在点击时读取当前标签页。扩展不读取登录凭证、不调用模型、不保存你的对话。</footer>
+  </main>
+  <script src="popup.js"></script>
+</body></html>

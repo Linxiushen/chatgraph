@@ -1,0 +1,11 @@
+.git
+**/.*
+**/.*/**
+**/.env
+**/.env.*
+**/.data
+**/node_modules
+**/test-output
+**/*.log
+**/dist
+**/.DS_Store

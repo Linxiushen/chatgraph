@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGraph 对话采集",
+  "version": "0.2.0",
+  "description": "预览并导出 ChatGPT / DeepSeek 当前页面已加载的对话，保留发言角色和来源。",
+  "permissions": ["activeTab", "scripting", "clipboardWrite"],
+  "optional_host_permissions": ["http://127.0.0.1/*"],
+  "action": { "default_title": "导入 ChatGraph", "default_popup": "popup.html" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'" }
+}

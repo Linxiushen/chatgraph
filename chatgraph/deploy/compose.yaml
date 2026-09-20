@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: chatgraph/deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      CHATGRAPH_HOST: 0.0.0.0
+      CHATGRAPH_PORT: 4317
+      CHATGRAPH_PUBLIC_ORIGIN: https://${CHATGRAPH_DOMAIN:?Set CHATGRAPH_DOMAIN}
+      CHATGRAPH_AUTH_PASSWORD: ${CHATGRAPH_AUTH_PASSWORD:?Set a password of at least 16 characters}
+      CHATGRAPH_API_BASE_URL: https://api.deepseek.com
+      CHATGRAPH_MODEL: deepseek-v4-pro
+      CHATGRAPH_REASONING_EFFORT: max
+      CHATGRAPH_API_KEY: ${CHATGRAPH_API_KEY:?Set your provider key}
+      CHATGRAPH_DATA_DIR: /data
+    volumes:
+      - chatgraph_data:/data
+    networks: [chatgraph]
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      CHATGRAPH_DOMAIN: ${CHATGRAPH_DOMAIN:?Set CHATGRAPH_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [chatgraph]
+volumes:
+  chatgraph_data:
+  caddy_data:
+  caddy_config:
+networks:
+  chatgraph:

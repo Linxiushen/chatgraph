@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ChatGraph · 对话图谱</title>
+  <style>
+    :root{font-family:var(--font-sans,system-ui,-apple-system,sans-serif);color:var(--color-text-primary,#234339);background:var(--color-background-primary,#fafbf7);font-size:14px}*{box-sizing:border-box}body{margin:0;padding:20px}header{display:flex;justify-content:space-between;gap:16px;align-items:start}h1{font-size:22px;margin:0 0 7px}p{line-height:1.6}header p{margin:0;color:#758179;font-size:12px}.actions{display:flex;gap:7px;flex-wrap:wrap}button{font:inherit;cursor:pointer;border:1px solid #d4dfd0;border-radius:8px;padding:8px 11px;background:#fff;color:#27513f}button:hover{background:#eef3e7}button:disabled{opacity:.5;cursor:default}.notice{font-size:12px;color:#78683e;background:#f6efdb;padding:10px 13px;border-radius:9px;margin:16px 0}.workspace{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(220px,1fr);gap:18px}.tree{max-height:560px;overflow:auto;padding:2px 6px 10px 0}details details{margin-left:18px;border-left:1px solid #dbe5d6;padding-left:10px}summary{list-style:none;display:flex;align-items:center;gap:5px;padding:5px 0}summary::-webkit-details-marker{display:none}.fold{flex:none;color:#7c8f7b;cursor:pointer;width:17px}details[open]>summary>.fold:before{content:'▾'}details:not([open])>summary>.fold:before{content:'▸'}details[data-leaf=true]>summary>.fold:before{content:'·'}.node{flex:1;text-align:left;background:#fff;border:1px solid #dce5d5;line-height:1.45;padding:10px 12px}.node[aria-current=true]{border-color:#3c7354;background:#edf4e9}.node strong{display:block;font-size:13px}.badges{display:block;color:#718274;font-size:11px;margin-top:5px}.inspector{border-left:1px solid #dce5d5;padding-left:18px;max-height:560px;overflow:auto}.inspector h2{font-size:17px;margin:8px 0}.inspector h3{font-size:12px;color:#6c7f6b;font-weight:500;margin-top:22px}.source{margin:10px 0;border-radius:8px;background:#f0f4eb;padding:12px}.source strong{font-size:11px;color:#587659}.source pre{font:12px/1.65 system-ui;white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 0}.relation{font-size:12px;padding:6px 0}.empty{color:#738276;font-size:13px}.json{margin-top:15px}.json textarea{display:block;width:100%;min-height:130px;font:11px monospace;padding:10px}.json label{display:block;margin-bottom:7px}#status{font-size:12px;color:#627d63;margin-top:12px}@media(max-width:550px){body{padding:14px}header{display:block}.actions{margin-top:10px}.workspace{grid-template-columns:1fr}.inspector{border-left:0;border-top:1px solid #dce5d5;padding:12px 0 0}.tree{max-height:380px}}
+  </style>
+</head>
+<body>
+  <header><div><h1 id="title">对话图谱</h1><p id="subtitle">ChatGraph · 保留观点归属，回到原话</p></div><div class="actions"><button id="expand" disabled>展开全部</button><button id="export" disabled>导出 JSON</button></div></header>
+  <p class="notice" id="notice">等待工具提供图谱。本组件只接收本次工具结果，无法读取聊天历史。</p>
+  <div class="workspace"><section class="tree" id="tree" aria-label="可折叠知识大纲"></section><aside class="inspector" id="inspector" aria-label="观点与原文"><p class="empty">选择一个节点，查看观点归属、状态和原文依据。</p></aside></div>
+  <section class="json" id="json-panel" hidden><label for="json">可复制的完整图谱 JSON（可导入 ChatGraph）</label><textarea id="json" readonly></textarea></section>
+  <p id="status" role="status"></p>
+  <script>
+    (() => {
+      const $ = id => document.getElementById(id);
+      const ownership = { user:'用户观点', ai:'AI 建议', shared:'共同形成', unknown:'归属待确认' };
+      const statusNames = { confirmed:'已确认', proposed:'建议', rejected:'已否定', revised:'已修正', open:'待确认' };
+      const relations = { supports:'支持', challenges:'质疑', revises:'修正', depends:'依赖' };
+      let graph = null, current = null, rpcId = 0, bridgeReady = false;
+      const pending = new Map();
+      const notify = (method, params) => window.parent.postMessage({jsonrpc:'2.0',method,params}, '*');
+      function request(method, params) {
+        return new Promise((resolve,reject) => {
+          const id=++rpcId;
+          const timeout=setTimeout(() => {pending.delete(id);reject(new Error('宿主未响应'));}, 8000);
+          pending.set(id,{resolve,reject,timeout});
+          window.parent.postMessage({jsonrpc:'2.0',id,method,params}, '*');
+        });
+      }
+      function text(tag,value,className) {const el=document.createElement(tag);el.textContent=value || '';if(className)el.className=className;return el;}
+      function select(node) {
+        current=node.id;
+        for(const button of document.querySelectorAll('.node')) button.setAttribute('aria-current',String(button.dataset.id===node.id));
+        const box=$('inspector');box.replaceChildren();
+        box.append(text('h2',node.label),text('p',`${ownership[node.stance] || '归属待确认'} · ${statusNames[node.status] || '待确认'}`,'badges'));
+        if(node.summary)box.append(text('p',node.summary));
+        if(node.note)box.append(text('p',node.note,'empty'));
+        const links=graph.edges.filter(edge=>edge.type!=='contains'&&(edge.source===node.id||edge.target===node.id));
+        if(links.length){box.append(text('h3','观点关系'));for(const edge of links){const from=graph.nodes.find(item=>item.id===edge.source);const to=graph.nodes.find(item=>item.id===edge.target);box.append(text('div',`${from?.label || edge.source} → ${relations[edge.type] || edge.type} → ${to?.label || edge.target}`,'relation'));}}
+        box.append(text('h3','原文依据'));
+        if(!node.sourceIds?.length)box.append(text('p','此节点是组织主题，没有独立原文引用。','empty'));
+        for(const sourceId of node.sourceIds || []){
+          const source=graph.messages.find(message=>message.id===sourceId);if(!source)continue;
+          const card=document.createElement('article');card.className='source';
+          card.append(text('strong',`${source.role==='user'?'用户':source.role==='assistant'?'AI':'角色待确认'} · ${source.id}`),text('pre',source.content));box.append(card);
+        }
+      }
+      function render(result) {
+        const data=result?.structuredContent?.graph;
+        if(!data || !Array.isArray(data.nodes)||!Array.isArray(data.messages)||!Array.isArray(data.edges)){if(result?.isError)$('status').textContent='图谱未能生成，请查看工具错误后重试。';return;}
+        graph=data;current=null;$('title').textContent=graph.title;$('subtitle').textContent=`${graph.nodes.length} 个节点 · ${graph.messages.length} 条原文 · ChatGraph`;
+        $('notice').textContent=result.structuredContent.sourceNotice || '仅显示本次提供的原文范围；请核对观点归属与引用。';
+        const visited=new Set();
+        function build(node){
+          if(visited.has(node.id))return document.createTextNode('');visited.add(node.id);
+          const children=graph.nodes.filter(item=>item.parentId===node.id);
+          const branch=document.createElement('details');branch.open=true;branch.dataset.leaf=String(!children.length);
+          const row=document.createElement('summary');row.append(text('span','','fold'));
+          const button=document.createElement('button');button.className='node';button.dataset.id=node.id;button.setAttribute('aria-current','false');
+          button.append(text('strong',node.label),text('span',`${ownership[node.stance]||'归属待确认'} · ${statusNames[node.status]||'待确认'}`,'badges'));
+          button.addEventListener('click',event=>{event.preventDefault();select(node);});row.append(button);branch.append(row);
+          for(const child of children)branch.append(build(child));return branch;
+        }
+        $('tree').replaceChildren(...graph.nodes.filter(node=>node.parentId===null).map(build));
+        $('expand').disabled=false;$('export').disabled=false;$('json-panel').hidden=true;
+        if(graph.nodes.length)select(graph.nodes.find(node=>node.parentId!==null)||graph.nodes[0]);
+        $('status').textContent='点击观点查看原文；点击箭头折叠分支。';
+      }
+      window.addEventListener('message',event=>{
+        if(event.source!==window.parent)return;
+        const message=event.data;if(!message||message.jsonrpc!=='2.0')return;
+        if(typeof message.id==='number'&&pending.has(message.id)){
+          const promise=pending.get(message.id);pending.delete(message.id);clearTimeout(promise.timeout);
+          if(message.error)promise.reject(new Error(message.error.message||'宿主操作失败'));else promise.resolve(message.result);
+        }else if(message.method==='ui/notifications/tool-result')render(message.params);
+        else if(message.method==='ui/notifications/tool-cancelled')$('status').textContent='整理已取消。';
+      });
+      $('expand').addEventListener('click',()=>{for(const item of $('tree').querySelectorAll('details'))item.open=true;});
+      $('export').addEventListener('click',async()=>{
+        if(!graph)return;
+        const data=JSON.stringify(graph,null,2);
+        try{
+          if(!bridgeReady)throw new Error('宿主桥接未就绪');
+          const result=await request('ui/download-file',{contents:[{type:'resource',resource:{uri:'file:///chatgraph.json',mimeType:'application/json',text:data}}]});
+          if(result?.isError)throw new Error('宿主不支持下载');
+          $('status').textContent='已请求宿主下载完整图谱 JSON。';
+        }catch{
+          $('json-panel').hidden=false;$('json').value=data;$('json').focus();$('json').select();
+          $('status').textContent='当前宿主未完成下载。可复制下方 JSON，在 ChatGraph 中导入。';
+        }
+      });
+      if(window.parent!==window){
+        request('ui/initialize',{appInfo:{name:'chatgraph-view',version:'0.2.0'},appCapabilities:{},protocolVersion:'2026-01-26'}).then(()=>{
+          bridgeReady=true;notify('ui/notifications/initialized',{});
+          new ResizeObserver(()=>notify('ui/notifications/size-changed',{height:Math.min(900,Math.ceil(document.body.scrollHeight+30))})).observe(document.body);
+        }).catch(()=>$('status').textContent='无法连接组件宿主。请重新打开图谱工具结果。');
+      }
+    })();
+  </script>
+</body></html>
