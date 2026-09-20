@@ -2563,6 +2563,23 @@ h1:hover .title-pencil {
 .share-result .compact { display: inline-flex; margin-right: 8px; }
 .share-existing { margin-top: 17px; }
 .capture-notice { margin-bottom: 15px; }
+.import-selection { margin: 15px 0 20px; padding: 16px; border: 1px solid #cbdcbd; border-radius: 9px; background: #f8fbf3; }
+.import-selection h3 { margin: 0 0 6px; color: #486d35; font-size: 14px; font-weight: 600; }
+.import-selection .modal-note { margin: 8px 0 13px; line-height: 1.8; }
+.import-selection-status { color: #53763f; font-size: 12px; line-height: 1.7; }
+.import-range { display: flex; align-items: flex-end; gap: 12px; }
+.import-range .field { flex: 1; min-width: 0; margin: 0; }
+.import-range button { flex-shrink: 0; margin-bottom: 1px; }
+.import-message-list { max-height: 340px; overflow: auto; border: 1px solid #dde7d4; border-radius: 7px; background: #fff; margin: 13px 0; overscroll-behavior: contain; }
+.import-message { padding: 13px; border-bottom: 1px solid #e6eddf; }
+.import-message:last-child { border-bottom: 0; }
+.import-message.unknown-role { background: #fffaf0; }
+.import-message-meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.import-message-meta strong { color: #6c825b; font-size: 11px; font-weight: 500; }
+.import-message-meta select { width: auto; max-width: 160px; padding: 4px 7px; border: 1px solid #d6e2cb; border-radius: 4px; font-size: 11px; color: #516f3d; background: #fff; }
+.import-message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; color: #516544; font-size: 12px; margin: 8px 0 0; max-height: 230px; overflow: auto; }
+.import-selection-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 14px; }
+.upload-row { flex-wrap: wrap; }
 .relation-suggestion { border: 1px solid #dce6d2; border-radius: 8px; padding: 15px; margin-top: 13px; background: #fcfdf9; }
 .relation-suggestion h3 { margin: 0 0 10px; font-size: 12px; line-height: 1.8; font-weight: 550; color: #587947; }
 .relation-suggestion p { margin: 8px 0; font-size: 11px; line-height: 1.8; color: #859777; white-space: pre-wrap; }
@@ -2576,6 +2593,10 @@ button:disabled { opacity: .45; cursor: default; }
   .workbench-toolbar .search-control { width: 88px; }
 }
 @media (max-width: 700px) {
+  .import-selection { padding: 12px; }
+  .import-range { gap: 8px; flex-wrap: wrap; }
+  .import-range .field { flex-basis: 35%; }
+  .import-selection-actions { flex-wrap: wrap; }
   .workbench-toolbar .view-tab { font-size: 9px; padding: 7px 6px; }
   .workbench-toolbar .view-tab .icon-wrap { display: none; }
   .workbench-toolbar .search-control { width: 26px; }

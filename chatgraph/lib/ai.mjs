@@ -49,18 +49,24 @@ export function resolveAIConfig(supplied = {}, env = process.env) {
 
 /** Split at message boundaries, with bounded overlapping context and exact source IDs. */
 export function chunkMessages(messages, maxChars = 60000) {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 2) throw new Error('对话分段大小须为至少 2 个字符的整数。');
   const chunks = [];
   let current = [], size = 0;
   for (const message of messages) {
     const pieces = [];
-    for (let offset = 0; offset < message.content.length; offset += maxChars) {
-      pieces.push({ ...message, content: message.content.slice(offset, offset + maxChars) });
+    for (let offset = 0; offset < message.content.length;) {
+      let end = Math.min(offset + maxChars, message.content.length);
+      // Keep an astral character intact at a UTF-16 boundary.
+      if (end < message.content.length && /[\uD800-\uDBFF]/.test(message.content[end - 1]) && /[\uDC00-\uDFFF]/.test(message.content[end])) end--;
+      pieces.push({ ...message, content: message.content.slice(offset, end) });
+      offset = end;
     }
     if (!pieces.length) pieces.push(message);
     for (const piece of pieces) {
       if (current.length && size + piece.content.length > maxChars) {
         chunks.push(current);
         const overlap = current.slice(-2).filter(item => item.content.length < maxChars / 8 && item.id !== piece.id);
+        while (overlap.length && overlap.reduce((sum, item) => sum + item.content.length, 0) + piece.content.length > maxChars) overlap.shift();
         current = overlap;
         size = overlap.reduce((sum, item) => sum + item.content.length, 0);
       }
@@ -70,6 +76,40 @@ export function chunkMessages(messages, maxChars = 60000) {
   }
   if (current.length) chunks.push(current);
   return chunks;
+}
+
+// Bound the actual serialized merge payload, including candidate metadata and escaping.
+const MERGE_PAYLOAD_LIMIT = 240000;
+const MERGE_EXCERPT_MIN = 128;
+const EXCERPT_MARKER = '\n[中间原文省略，完整内容保存在原文视图]\n';
+
+function boundedExcerpt(content, encodedBudget) {
+  if (content.length <= 2200 && JSON.stringify(content).length - 2 <= encodedBudget) return content;
+  let low = 0, high = Math.min(content.length, 2200), best = EXCERPT_MARKER;
+  while (low <= high) {
+    const keep = Math.floor((low + high) / 2);
+    let head = Math.ceil(keep * 0.65), tail = keep - head;
+    if (/[\uD800-\uDBFF]/.test(content[head - 1] || '')) head--;
+    if (tail && /[\uDC00-\uDFFF]/.test(content[content.length - tail] || '')) tail--;
+    const excerpt = content.slice(0, head) + EXCERPT_MARKER + (tail ? content.slice(-tail) : '');
+    if (JSON.stringify(excerpt).length - 2 <= encodedBudget) { best = excerpt; low = keep + 1; }
+    else high = keep - 1;
+  }
+  return best;
+}
+
+function mergePayload(groups, messages, title) {
+  const ids = new Set(groups.flatMap(group => group.graph.messages.map(message => message.id)));
+  const sources = messages.filter(message => ids.has(message.id));
+  const payload = { title, messages: sources.map(message => ({ ...message, content: '' })), candidates: groups.map(group => ({
+    segment: group.firstSegment, throughSegment: group.lastSegment, nodes: group.graph.nodes, edges: group.graph.edges,
+  })) };
+  const remaining = MERGE_PAYLOAD_LIMIT - JSON.stringify(payload).length;
+  if (remaining < sources.length * MERGE_EXCERPT_MIN) return null;
+  const perMessage = Math.floor(remaining / sources.length);
+  payload.messages = sources.map(message => ({ ...message, content: boundedExcerpt(message.content, perMessage) }));
+  if (JSON.stringify(payload).length > MERGE_PAYLOAD_LIMIT) return null;
+  return { payload, sources };
 }
 
 function abortError() { return Object.assign(new Error('整理已取消。'), { name: 'AbortError' }); }
@@ -133,6 +173,7 @@ export async function extractConversation(input, {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (signal?.aborted) throw abortError();
       let response;
+      const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
       try {
         receipt.calls++;
         response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
@@ -141,7 +182,7 @@ export async function extractConversation(input, {
             response_format: { type: 'json_object' }, stream: false,
             ...(deepseek ? { thinking: { type: 'enabled' }, reasoning_effort: config.reasoningEffort, max_tokens: 24000 } : {}),
           }),
-          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+          signal: requestSignal,
           redirect: 'error',
         });
       } catch (error) {
@@ -157,7 +198,15 @@ export async function extractConversation(input, {
         continue;
       }
       if (!response.ok) throw new Error(`模型 API 返回 HTTP ${response.status}，请检查密钥、额度、模型名称，以及是否支持 JSON 输出。`);
-      const body = await response.json().catch(() => { throw new Error('模型接口未返回有效 JSON。'); });
+      let body;
+      try { body = await response.json(); }
+      catch (error) {
+        if (signal?.aborted) throw abortError();
+        if (requestSignal.aborted || error.name === 'TimeoutError') throw new Error(`模型整理超过 ${Math.round(timeoutMs / 1000)} 秒，请缩短对话后重试。`);
+        throw new Error(error instanceof SyntaxError ? '模型接口返回了无法解析的响应，请检查 API 地址。' : '模型结果传输中断，请检查网络后重试。');
+      }
+      if (signal?.aborted) throw abortError();
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('模型接口返回的响应格式不正确。');
       receipt.inputTokens += Number(body.usage?.prompt_tokens) || 0;
       receipt.outputTokens += Number(body.usage?.completion_tokens) || 0;
       const choice = body.choices?.[0];
@@ -187,17 +236,34 @@ export async function extractConversation(input, {
     onProgress({ progress: Math.round(index / (chunks.length + (chunks.length > 1 ? 1 : 0)) * 90) + 3,
       message: chunks.length > 1 ? `正在整理第 ${index + 1} / ${chunks.length} 段对话…` : 'DeepSeek 正在梳理观点与判断依据…' });
     const context = chunks.length > 1 ? `这是按时间顺序切分的第 ${index + 1}/${chunks.length} 段，可能包含相邻上下文和长消息片段。只根据本段作暂时判断，保留源 ID，后续会合并。` : '';
-    results.push(await extract({ title: input.title || '', messages: chunk, ...(context ? { context } : {}) }, chunk, EXTRACTION_PROMPT));
+    results.push({ graph: await extract({ title: input.title || '', messages: chunk, ...(context ? { context } : {}) }, chunk, EXTRACTION_PROMPT), firstSegment: index + 1, lastSegment: index + 1 });
   }
-  let graph = results[0];
-  if (results.length > 1) {
-    onProgress({ progress: 88, message: '正在合并各段观点，核对前后判断变化…' });
-    const instruction = EXTRACTION_PROMPT + '\n当前任务是合并按时间顺序提取的多个片段。将相同概念整合，保留后续否定或修正，revises 边从新判断指向旧判断。禁止丢失用户最终决定、被放弃的方案和未解问题。message 的 content 是原文节选，用于核对来源归属，完整原文另行保存。生成最多 160 个节点。';
-    const candidates = results.map((result, index) => ({ segment: index + 1, nodes: result.nodes, edges: result.edges }));
-    const excerpts = messages.map(message => ({ ...message, content: message.content.length > 2200 ? message.content.slice(0, 1600) + '\n[中间原文省略，完整内容保存在原文视图]\n' + message.content.slice(-600) : message.content }));
-    graph = await extract({ title: input.title || '', messages: excerpts, candidates }, messages, instruction);
-    receipt.warnings.push(`对话分为 ${chunks.length} 段后合并，请重点核查跨段判断变化。`);
+  let groups = results;
+  if (groups.length > 1) {
+    const instruction = EXTRACTION_PROMPT + '\n当前任务是合并按时间顺序提取的多个片段。segment/throughSegment 表示原始片段范围。将相同概念整合，保留后续否定或修正，revises 边从新判断指向旧判断。禁止丢失用户最终决定、被放弃的方案和未解问题。message 的 content 是明确标注的头尾原文节选，用于核对来源归属，省略内容不能被当作不存在；candidate 包含对完整片段的提取结果，完整原文另行保存。生成最多 160 个节点。';
+    let mergeCalls = 0;
+    while (groups.length > 1) {
+      const batches = [];
+      let batch = [];
+      for (const group of groups) {
+        if (batch.length && !mergePayload([...batch, group], messages, input.title || '')) { batches.push(batch); batch = []; }
+        batch.push(group);
+      }
+      if (batch.length) batches.push(batch);
+      if (batches.every(items => items.length === 1)) throw new Error('分段结果过大，无法在完整保留候选观点和来源引用的前提下合并。请按主题拆成较短的对话分别导入。');
+      const merged = [];
+      for (const items of batches) {
+        if (items.length === 1) { merged.push(items[0]); continue; }
+        const { payload, sources } = mergePayload(items, messages, input.title || '');
+        onProgress({ progress: 88, message: `正在合并第 ${items[0].firstSegment}–${items.at(-1).lastSegment} 段观点，核对前后判断变化…` });
+        merged.push({ graph: await extract(payload, sources, instruction), firstSegment: items[0].firstSegment, lastSegment: items.at(-1).lastSegment });
+        mergeCalls++;
+      }
+      groups = merged;
+    }
+    receipt.warnings.push(`对话分为 ${chunks.length} 段，经 ${mergeCalls} 次合并；合并时原文使用标记过的头尾节选，完整内容已保留，请重点核查跨段判断变化。`);
   }
+  const graph = groups[0].graph;
   graph.messages = messages;
   receipt.durationMs = Date.now() - start;
   graph.analysis = receipt;

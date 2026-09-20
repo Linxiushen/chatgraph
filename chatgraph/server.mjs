@@ -46,9 +46,9 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
   const shares = createShareStore({ dataDir });
   async function importGraph(input, options = {}) {
     if (!input || typeof input !== 'object') throw new Error('请提供对话内容。');
-    if (typeof input.text === 'string' && input.text.trim().startsWith('{')) {
+    if (typeof input.text === 'string' && input.text.replace(/^\uFEFF/, '').trim().startsWith('{')) {
       let value;
-      try { value = JSON.parse(input.text); } catch { /* parser gives the actionable error */ }
+      try { value = JSON.parse(input.text.replace(/^\uFEFF/, '')); } catch { /* parser gives the actionable error */ }
       if (value?.nodes && value?.edges && value?.messages) {
         const imported = validateGraph(value);
         imported.id = randomUUID(); imported.revision = 0;

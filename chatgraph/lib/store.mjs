@@ -77,18 +77,27 @@ export function createGraphStore({ dataDir }) {
     await atomicJSON(graphFile(graph.id), graph);
     return graph;
   }
-  async function list() {
+  async function* scan() {
     let entries;
-    try { entries = await fs.readdir(directory); } catch (cause) { if (cause.code === 'ENOENT') return []; throw cause; }
-    const graphs = [];
-    for (const entry of entries.filter(name => name.endsWith('.json'))) {
-      const id = entry.slice(0, -5);
-      if (!validId(id)) continue;
-      try { graphs.push(summary(await load(id))); }
-      catch (cause) {
-        graphs.push({ id, title: `需要恢复的图谱 · ${id}`, description: cause.message, updatedAt: '', nodeCount: 0, mode: 'outline', source: { platform: '', url: '', complete: 'unknown' }, recoveryRequired: true });
+    try { entries = await fs.readdir(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    const ids = entries.filter(name => name.endsWith('.json')).map(name => name.slice(0, -5)).filter(validId);
+    // Bound the number of full transcripts in memory while overlapping disk reads.
+    // Each consumer uses this same validated snapshot instead of loading it again.
+    for (let offset = 0; offset < ids.length; offset += 4) {
+      const batch = ids.slice(offset, offset + 4);
+      const outcomes = await Promise.allSettled(batch.map(load));
+      for (const [index, outcome] of outcomes.entries()) {
+        if (outcome.status === 'fulfilled') yield { graph: outcome.value, item: summary(outcome.value) };
+        else if (outcome.reason.code !== 'ENOENT') {
+          const id = batch[index];
+          yield { item: { id, title: `需要恢复的图谱 · ${id}`, description: outcome.reason.message, updatedAt: '', nodeCount: 0, mode: 'outline', source: { platform: '', url: '', complete: 'unknown' }, recoveryRequired: true } };
+        }
       }
     }
+  }
+  async function list() {
+    const graphs = [];
+    for await (const { item } of scan()) graphs.push(item);
     return graphs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   async function history(id) {
@@ -147,23 +156,25 @@ export function createGraphStore({ dataDir }) {
     if (!terms.length) return [];
     const normalize = value => value.normalize('NFKC').toLocaleLowerCase();
     const results = [];
-    for (const item of await list()) {
-      if (item.recoveryRequired) continue;
-      const graph = await load(item.id);
-      const nodes = graph.nodes.filter(node => terms.every(term => normalize([node.label, node.summary, node.note].join('\n')).includes(term)));
-      const messages = graph.messages.filter(message => terms.every(term => normalize(message.content).includes(term)));
-      const titleMatches = terms.every(term => normalize(`${graph.title}\n${graph.description}`).includes(term));
+    const matches = value => { const text = normalize(value); return terms.every(term => text.includes(term)); };
+    for await (const { item, graph } of scan()) {
+      if (!graph) continue;
+      const nodes = graph.nodes.filter(node => matches([node.label, node.summary, node.note].join('\n')));
+      const messages = graph.messages.filter(message => matches(message.content));
+      const titleMatches = matches(`${graph.title}\n${graph.description}`);
       if (titleMatches || nodes.length || messages.length) results.push({ ...item, matchType: 'text', score: (titleMatches ? 10 : 0) + nodes.length * 2 + messages.length, nodes: nodes.slice(0, 10).map(node => ({ id: node.id, label: node.label, summary: node.summary.slice(0, 240) })), messages: messages.slice(0, 5).map(message => ({ id: message.id, role: message.role, excerpt: message.content.slice(0, 240) })) });
     }
     return results.sort((a, b) => b.score - a.score || b.updatedAt.localeCompare(a.updatedAt)).slice(0, Math.max(1, Math.min(100, Number(limit) || 50)));
   }
   async function backup() {
     return serialized(async () => {
-      const entries = await list();
-      const damaged = entries.filter(item => item.recoveryRequired);
+      const graphs = [], damaged = [];
+      for await (const { item, graph } of scan()) {
+        if (graph) graphs.push(graph);
+        else damaged.push(item);
+      }
       if (damaged.length) throw error(`有 ${damaged.length} 个损坏图谱，无法生成完整备份。请先恢复它们；也可直接复制整个数据目录保留原始文件。`, 422);
-      const graphs = [];
-      for (const item of entries) graphs.push(await load(item.id));
+      graphs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       return { format: 'chatgraph-backup', version: 1, createdAt: new Date().toISOString(), graphs };
     });
   }

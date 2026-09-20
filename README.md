@@ -4,7 +4,7 @@
 
 ![ChatGraph 工作区演示](chatgraph/docs/workspace.png)
 
-**0.2.0-beta.2** 提供 DeepSeek V4 Pro 结构化、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出，以及 Chrome/Edge 扩展和可选 ChatGPT MCP 组件。
+**0.3.0-beta.1** 新增账号导出的本地会话选择、原文范围预览和角色核对，改进长对话合并与任务恢复。提供 DeepSeek V4 Pro 结构化、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出，以及 Chrome/Edge 扩展和可选 ChatGPT MCP 组件。
 
 ## 本地运行
 

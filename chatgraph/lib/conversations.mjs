@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { parseConversation } from '../public/import-model.js';
+export { parseConversation } from '../public/import-model.js';
 
 const LIMIT = { input: 2_000_000, messages: 500, message: 100_000, nodes: 200, edges: 3_000 };
 const ROLES = ['user', 'assistant', 'unknown'];
@@ -42,115 +44,6 @@ function unique(items, where) {
     seen.add(item.id);
   }
   return seen;
-}
-function role(value) {
-  const normalized = String(value || '').toLowerCase();
-  if (['user', 'human', '用户', '我', '人类'].includes(normalized)) return 'user';
-  if (['assistant', 'ai', 'chatgpt', 'deepseek', 'claude', 'gemini', '助手', '模型', '回答'].includes(normalized)) return 'assistant';
-  return 'unknown';
-}
-function textContent(value) {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value.map(part => typeof part === 'string' ? part : part?.type === 'text' || part?.type === 'input_text' || part?.type === 'output_text' ? String(part.text || '') : '').filter(Boolean).join('\n');
-  if (value && typeof value === 'object') {
-    if (typeof value.text === 'string') return value.text;
-    if (Array.isArray(value.parts)) return textContent(value.parts);
-  }
-  return '';
-}
-function normalizeMessages(raw) {
-  if (raw.length > LIMIT.messages) fail(`一次最多导入 ${LIMIT.messages} 条文字消息，请选择较短的对话。`);
-  const messages = [];
-  const ids = new Set();
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') fail('消息必须是包含 role 和 content 的对象。');
-    const originalRole = entry.role ?? entry.author?.role;
-    if (['system', 'tool', 'developer', 'function'].includes(String(originalRole).toLowerCase())) continue;
-    const content = textContent(entry.content);
-    if (!content.trim()) continue;
-    string(content, '单条消息', LIMIT.message);
-    const requestedId = entry.id;
-    let id = typeof requestedId === 'string' && ID.test(requestedId) && !['__proto__', 'prototype', 'constructor'].includes(requestedId) ? requestedId : `m-${messages.length + 1}`;
-    if (ids.has(id)) fail(`消息 ID 重复：${id}，请检查导出文件。`);
-    ids.add(id);
-    messages.push({ id, role: role(originalRole), content });
-  }
-  if (!messages.length) fail('没有找到可导入的文字消息。当前版本只读取文字，不解析图片、音频或附件。');
-  return messages;
-}
-function fromMapping(conversation) {
-  const mapping = record(conversation.mapping, 'ChatGPT mapping');
-  if (typeof conversation.current_node !== 'string' || !conversation.current_node) fail('ChatGPT 导出缺少 current_node，无法确定当前对话分支。请导出单个会话，或复制当前分支的文字。');
-  const chain = [];
-  const visited = new Set();
-  let cursor = conversation.current_node;
-  while (cursor !== null && cursor !== undefined) {
-    if (typeof cursor !== 'string' || visited.has(cursor)) fail('ChatGPT 对话分支存在循环或无效节点，请重新导出。');
-    visited.add(cursor);
-    const node = mapping[cursor];
-    if (!node || typeof node !== 'object') fail(`ChatGPT 当前分支缺少节点 ${cursor}，请导入完整的单个会话文件。`);
-    if (node.message) chain.push({ ...node.message, id: node.message.id || cursor });
-    cursor = node.parent;
-    if (visited.size > 2_000) fail('ChatGPT 分支过长，请选择部分对话导入。');
-  }
-  return normalizeMessages(chain.reverse());
-}
-function fromJson(value) {
-  if (Array.isArray(value)) {
-    if (value.every(item => item && typeof item === 'object' && ('role' in item || 'author' in item) && 'content' in item)) return normalizeMessages(value);
-    if (value.length !== 1) fail('此文件包含多个会话。请先选择并导出一个会话；为避免遗漏，不会自动选择第一段。');
-    return fromJson(value[0]);
-  }
-  record(value, '导入的 JSON');
-  if (value.mapping) return fromMapping(value);
-  if (Array.isArray(value.messages)) return normalizeMessages(value.messages);
-  if (Array.isArray(value.conversations)) return fromJson(value.conversations);
-  fail('不支持这个 JSON 结构。请提供单个 ChatGPT mapping 会话，或 { "messages": [{ "role": "user", "content": "…" }] }。');
-}
-
-/** Parse only the supplied text/current ChatGPT branch; never infer a speaker. */
-export function parseConversation(text) {
-  string(text, '对话内容', LIMIT.input);
-  if (!text.trim()) fail('请粘贴对话内容，或选择文字 / JSON 文件。');
-  const withoutBom = text.replace(/^\uFEFF/, '');
-  const trimmed = withoutBom.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    let value;
-    try { value = JSON.parse(trimmed); } catch { fail('JSON 格式不完整或有语法错误。请使用完整导出文件，或以普通对话文字导入。'); }
-    return fromJson(value);
-  }
-  const lines = withoutBom.split(/\r?\n/);
-  const raw = [];
-  let current = { role: 'unknown', lines: [] };
-  let fence = null;
-  let hasRoleLabel = false;
-  // Explicit role labels only. A Markdown heading without a colon is also a label.
-  const roleNames = 'user|human|assistant|ai|chatgpt|deepseek|claude|gemini|用户|人类|我|助手|模型';
-  const colon = new RegExp(`^\\s*(?:#{1,6}\\s+)?(?:\\*\\*)?(${roleNames})(?:\\*\\*)?\\s*[:：](?:\\*\\*)?\\s?(.*)$`, 'i');
-  const heading = new RegExp(`^\\s*(?:#{1,6}\\s+|\\*\\*)(${roleNames})(?:\\*\\*)?\\s*$`, 'i');
-  function flush() {
-    const content = current.lines.join('\n');
-    if (content.trim()) raw.push({ role: current.role, content });
-  }
-  for (const line of lines) {
-    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
-    if (fenceMatch) {
-      const mark = fenceMatch[1];
-      if (!fence) fence = mark;
-      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null;
-      current.lines.push(line);
-      continue;
-    }
-    const match = !fence && (line.match(colon) || line.match(heading));
-    if (match) {
-      hasRoleLabel = true;
-      flush();
-      current = { role: role(match[1]), lines: match[2] ? [match[2]] : [] };
-    } else current.lines.push(line);
-  }
-  flush();
-  if (!hasRoleLabel) return normalizeMessages([{ role: 'unknown', content: withoutBom }]);
-  return normalizeMessages(raw);
 }
 
 function excerpt(value, length) {

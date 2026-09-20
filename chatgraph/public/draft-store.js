@@ -1,3 +1,5 @@
+import { inspectConversationFile } from './import-model.js';
+
 const DB_NAME = 'chatgraph-drafts';
 let connection;
 const ownerKey = 'chatgraph-draft-owner';
@@ -52,6 +54,9 @@ export const draftStore = {
   discard: storageId => transaction('readwrite', store => store.delete(storageId)),
   putImport: operation => {
     const input = operation.input || {};
+    // Account exports must be narrowed in memory before entering durable drafts.
+    // Refuse malformed JSON too: a partly pasted archive can still contain chats.
+    if (/^[\s\uFEFF]*[\[{]/.test(input.text || '') && inspectConversationFile(input.text).kind === 'archive') throw new Error('请先选择一个会话，再保存导入草稿。');
     // Explicit allowlist: temporary API configuration can never be persisted.
     const safe = { text: input.text || '', title: input.title || '', platform: input.platform || '', url: input.url || '', mode: input.mode || 'outline' };
     if (input.capture) safe.capture = { scope: input.capture.scope, complete: input.capture.complete, warnings: input.capture.warnings, capturedAt: input.capture.capturedAt };

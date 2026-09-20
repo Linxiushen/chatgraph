@@ -16,7 +16,12 @@ export function createJobQueue({ dataDir, run }) {
     const next = previous.catch(() => {}).then(async () => {
       await fs.mkdir(directory, { recursive: true, mode: 0o700 });
       const target = path.join(directory, `${job.id}.json`), temporary = `${target}.${randomUUID()}.tmp`;
-      try { await fs.writeFile(temporary, snapshot, { mode: 0o600 }); await fs.rename(temporary, target); }
+      try {
+        const handle = await fs.open(temporary, 'wx', 0o600);
+        try { await handle.writeFile(snapshot); await handle.sync(); }
+        finally { await handle.close(); }
+        await fs.rename(temporary, target);
+      }
       finally { await fs.rm(temporary, { force: true }); }
     });
     job.write = next;
@@ -85,9 +90,22 @@ export function createJobQueue({ dataDir, run }) {
         if (['completed', 'failed', 'cancelled'].includes(job.status)) await job.write;
         return publicJob(job);
       }
-      let job;
-      try { job = JSON.parse(await fs.readFile(path.join(directory, `${id}.json`), 'utf8')); }
-      catch { throw Object.assign(new Error('任务不存在。'), { status: 404 }); }
+      let contents, job;
+      try { contents = await fs.readFile(path.join(directory, `${id}.json`), 'utf8'); }
+      catch (error) {
+        if (error.code === 'ENOENT') throw Object.assign(new Error('任务不存在。'), { status: 404 });
+        throw Object.assign(new Error('暂时无法读取任务记录，请检查数据目录后重试；不会重复调用模型。'), { status: 503 });
+      }
+      // Only a genuinely missing receipt permits a new paid call with this UUID.
+      // Preserve damaged or unreadable files instead of overwriting their evidence.
+      try { job = JSON.parse(contents); } catch { /* Validated below. */ }
+      if (!job || job.id !== id || !['import', 'append'].includes(job.kind) ||
+          !['queued', 'running', 'completed', 'failed', 'cancelled'].includes(job.status) ||
+          !Number.isFinite(job.progress) || job.progress < 0 || job.progress > 100 ||
+          typeof job.message !== 'string' || !Number.isFinite(Date.parse(job.createdAt)) ||
+          !Number.isFinite(Date.parse(job.updatedAt)) || (job.status === 'completed' && !job.result)) {
+        throw Object.assign(new Error('任务记录损坏，原文件已保留；请先恢复记录，不会重复调用模型。'), { status: 422 });
+      }
       if (['queued', 'running'].includes(job.status)) {
         job.status = 'failed'; job.error = '服务重启中断了整理，请重新提交。原文草稿仍保留在浏览器中。'; job.message = job.error;
         await persist(job);
@@ -99,6 +117,8 @@ export function createJobQueue({ dataDir, run }) {
       if (!job) return this.get(id);
       if (['queued', 'running'].includes(job.status)) {
         job.status = 'cancelled'; job.message = '整理已取消。'; job.controller.abort(); job.input = undefined;
+        const queuedIndex = queue.indexOf(job);
+        if (queuedIndex !== -1) queue.splice(queuedIndex, 1);
         job.updatedAt = new Date().toISOString(); await persist(job);
       }
       return publicJob(job);

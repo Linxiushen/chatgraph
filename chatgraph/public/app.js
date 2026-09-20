@@ -1,5 +1,6 @@
 import { descendantIds, reparentNode, reorderNode, removeNodes, timelineEvents } from './editor-model.js';
 import { draftStore } from './draft-store.js';
+import { inspectConversationFile, previewConversation } from './import-model.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -42,7 +43,7 @@ const RELATIONS = { contains: '包含', supports: '支持', challenges: '反驳'
 const TYPE_ICONS = { topic: 'nodes', claim: 'flag', evidence: 'link', question: 'question', action: 'check' };
 const ROLE_NAMES = { user: '我', assistant: 'AI 助手', unknown: '未标注说话者' };
 const state = { pendingImports: [], foreignDrafts: [], forceTreeLayout: false, autoSavePaused: false, redoHistory: [], multiSelected: new Set(), libraryQuery: '', conflictIds: new Set(), draftStorageFailed: false, graph: null, library: [], drafts: new Map(), view: innerWidth <= 700 ? 'outline' : 'graph', selected: null, dirty: false, saved: false, history: [], camera: { x: 0, y: 0, scale: 1 }, collapsed: new Set(), query: '', filterType: 'all', filterStatus: 'all', inspectorOpen: innerWidth > 880, api: { baseUrl: '', model: '', apiKey: '' }, config: {}, saving: false, importing: false, demo: null };
-let toastTimer, drag, modalRestoreFocus, autosaveTimer, liveEditKey;
+let toastTimer, drag, modalRestoreFocus, modalCleanup, autosaveTimer, liveEditKey;
 const saveInFlight = new Map();
 
 function el(tag, props = {}, children = []) {
@@ -707,8 +708,9 @@ function removeNode(id) {
   toast('已删除该观点，子观点保留。可点击撤销恢复。');
 }
 
-function closeModal() { if (state.importing) return; $('#modal-root').replaceChildren(); modalRestoreFocus?.focus?.(); }
+function closeModal() { if (state.importing) return; modalCleanup?.(); modalCleanup = null; $('#modal-root').replaceChildren(); modalRestoreFocus?.focus?.(); }
 function modal(title, subtitle, options = {}) {
+  modalCleanup?.(); modalCleanup = options.onClose || null;
   modalRestoreFocus = document.activeElement;
   const backdrop = el('div', { class: 'modal-backdrop' });
   const container = el('section', { class: `modal${options.wide ? ' wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title', tabIndex: -1 });
@@ -764,8 +766,11 @@ function openImport(options = {}) {
   const append = resumed ? Boolean(resumed.targetGraphId) : options.append === true;
   if (append && !state.graph) return;
   const captured = options.capture;
+  let localSource = null, localCatalog = null, localPreview = null, roleOverrides = {}, conversationIndex, catalogQuery = '', selecting = false;
+  let importCapture = captured?.capture || resumed?.input.capture;
+  let autoFilledTitle = '', sourceUrlEdited = false;
   const operation = resumed || { operationId: crypto.randomUUID(), targetGraphId: append ? state.graph.id : null, input: {}, jobId: null, phase: 'draft', updatedAt: Date.now() };
-  const dialog = modal(append ? '继续这次思考' : '让这段对话，留下来', append ? '补充一段对话，保留已有观点与来源。' : '导入真实对话，整理你的判断、依据和下一步。', { wide: true });
+  const dialog = modal(append ? '继续这次思考' : '让这段对话，留下来', append ? '补充一段对话，保留已有观点与来源。' : '导入真实对话，整理你的判断、依据和下一步。', { wide: true, onClose: () => { localSource = localCatalog = localPreview = null; roleOverrides = {}; } });
   const title = el('input', { value: resumed?.input.title || captured?.title || '', placeholder: append ? '例如：第二轮用户访谈后的反思' : '例如：我的 AI 产品方向探索', maxlength: 200 });
   const platform = selectInput({ ChatGPT: 'ChatGPT', DeepSeek: 'DeepSeek', Claude: 'Claude', Gemini: 'Gemini', 其他: '其他 / 手动输入' }, resumed?.input.platform || captured?.platform || 'ChatGPT', () => {});
   const url = el('input', { type: 'url', value: resumed?.input.url || captured?.url || '', placeholder: 'https://…（可选，仅记录出处）' });
@@ -773,39 +778,155 @@ function openImport(options = {}) {
   const modes = el('div', { class: 'import-modes' });
   const defaultMode = resumed?.input.mode || (state.config.aiConfigured || state.api.apiKey ? 'ai' : 'outline');
   for (const [value, label, help] of [['outline', '原文整理', '按原文组织，不推断个人立场。'], ['ai', 'AI 深度结构化', '提取判断、变化与依据，使用已配置模型。']]) modes.append(el('label', { class: 'mode-choice' }, [el('input', { type: 'radio', name: 'import-mode', value, checked: value === defaultMode }), el('span', {}, [el('strong', { text: label }), el('small', { text: help })])]));
-  const file = el('input', { type: 'file', accept: '.txt,.md,.json,text/plain,text/markdown,application/json' });
-  const fileInfo = el('small', { text: '支持 TXT、Markdown、JSON · 请求最大 2 MB' });
+  const file = el('input', { type: 'file', accept: '.txt,.md,.json,text/plain,text/markdown,application/json', 'aria-label': '选择对话文件或 ChatGPT 账号导出' });
+  const fileInfo = el('small', { text: '账号导出请先解压并选择 conversations.json · 本地文件最多 25 MB，选定内容最多 2 MB' });
+  const previewPanel = el('section', { class: 'import-selection', hidden: true, 'aria-label': '导入内容预览' });
+  const prepare = button('检查导入内容', () => prepareImport(text.value), 'secondary compact', 'search');
   file.addEventListener('change', async () => {
     const selected = file.files?.[0]; if (!selected) return;
-    if (selected.size > 2 * 1024 * 1024) return formError(dialog.body, '文件超过 2 MB，请先截取需要整理的对话。');
+    if (selected.size > 25 * 1024 * 1024) return formError(dialog.body, '文件超过 25 MB，请选择较小的导出文件。');
     const startedAt = formRevision;
+    submit.disabled = true;
     try {
       const content = await selected.text();
+      if (!dialog.container.isConnected) return;
       if (formRevision !== startedAt) return formError(dialog.body, '读取文件期间你修改了原文，已保留当前输入。需要替换时请重新选择文件。');
-      text.value = content; fileInfo.textContent = selected.name; if (!title.value) title.value = selected.name.replace(/\.[^.]+$/, ''); keepForm();
+      fileInfo.textContent = selected.name; prepareImport(content);
     }
     catch { formError(dialog.body, '无法读取文件，请尝试复制内容后粘贴。'); }
+    finally { file.value = ''; if (dialog.container.isConnected) submit.disabled = selecting || state.importing; }
   });
   dialog.body.append(modes);
   if (append && (state.graph.mode === 'demo' || state.graph.sessions?.some(session => session.mode === 'demo'))) dialog.body.append(el('p', { class: 'notice', text: '当前图谱包含演示数据。追加后这些示例观点会继续保留；也可以关闭此窗口，用“整理新的对话”建立独立图谱。' }));
   if (captured) dialog.body.append(el('p', { class: 'notice capture-notice', text: `来自浏览器的 ${captured.messages.length} 段对话。捕获范围是当前页面已加载的分支，完整性尚未确认，请先检查原文。${(captured.capture?.warnings || []).join(' ')}` }));
-  dialog.body.append(field('这次思考的标题', title), field('对话内容', text), el('div', { class: 'upload-row' }, [el('label', { class: 'file-label' }, [icon('upload'), el('span', { text: '上传对话文件' }), file]), fileInfo]), el('div', { class: 'field-row' }, [field('对话来自', platform), field('原始对话链接', url)]), el('p', { class: 'modal-note', text: '使用“我：/ AI：”或“User: / Assistant:”标记角色，可保留观点归属。分享链接仅作为出处保存。AI 模式会将导入对话发送至配置的模型服务。' }));
+  dialog.body.append(field('这次思考的标题', title), field('对话内容', text), el('div', { class: 'upload-row' }, [el('label', { class: 'file-label' }, [icon('upload'), el('span', { text: '选择对话文件' }), file]), prepare, fileInfo]), previewPanel, el('div', { class: 'field-row' }, [field('对话来自', platform), field('原始对话链接', url)]), el('p', { class: 'modal-note', text: '可在本机打开 ChatGPT 账号导出，选择一个会话及连续范围，再开始整理。账号导出原文件仅临时保留在当前窗口；只有应用后的选定内容会保存为草稿，并在开始整理后发给服务端。AI 模式会将选定对话发送至配置的模型服务。' }));
   const progress = el('div', { class: 'import-progress', hidden: true, role: 'status' });
   const progressText = el('p', { text: '正在准备…' }), progressBar = el('progress', { max: 100 });
   progress.append(progressText, progressBar); dialog.body.append(progress);
   let activeJob = operation.jobId && !['failed', 'cancelled'].includes(operation.phase) ? operation.jobId : null;
   let cancelled = false, fallbackController = null, formRevision = 0;
   const readInput = () => ({ text: text.value, title: title.value.trim(), platform: platform.value, url: url.value.trim(), mode: $('input[name="import-mode"]:checked', dialog.body).value,
-    ...((captured?.capture || resumed?.input.capture) ? { capture: captured?.capture || resumed.input.capture } : {}) });
+    ...(importCapture ? { capture: importCapture } : {}) });
+  const modeLimit = () => $('input[name="import-mode"]:checked', dialog.body).value === 'ai' ? 500 : 199;
+  const importBytes = input => new TextEncoder().encode(JSON.stringify(input)).byteLength;
+  function safeToRetain() {
+    if (selecting || importBytes({ text: text.value }) > 2 * 1024 * 1024) return false;
+    if (/^[\s\uFEFF]*[\[{]/.test(text.value)) {
+      try { return inspectConversationFile(text.value).kind !== 'archive'; }
+      catch { return false; } // Incomplete pasted archives also stay out of browser storage.
+    }
+    return true;
+  }
+  function resetSelection() {
+    localSource = localCatalog = localPreview = null; roleOverrides = {}; conversationIndex = undefined; catalogQuery = ''; selecting = false;
+    previewPanel.hidden = true; previewPanel.replaceChildren(); text.closest('.field').hidden = false; submit.disabled = false;
+  }
+  function prepareImport(content) {
+    if (state.importing || activeJob) return;
+    $('.form-error', dialog.body)?.remove();
+    try {
+      const catalog = inspectConversationFile(content);
+      localSource = content; localCatalog = catalog; roleOverrides = {}; conversationIndex = undefined; catalogQuery = ''; localPreview = null;
+      selecting = true; submit.disabled = true;
+      text.closest('.field').hidden = true;
+      // Never leave the whole account archive in the persistable transcript field.
+      if (catalog.kind === 'archive' && text.value === content) text.value = '';
+      renderSelection();
+    } catch (error) { formError(dialog.body, error.message); }
+  }
+  function renderSelection() {
+    previewPanel.hidden = false; previewPanel.replaceChildren();
+    previewPanel.append(el('h3', { text: localCatalog.kind === 'archive' ? '先选择一个会话' : '确认这次整理的内容' }), el('p', { class: 'modal-note', text: '预览在当前浏览器内完成。选择范围并确认后，再开始整理。' }));
+    if (localCatalog.kind === 'archive') {
+      const filter = el('input', { type: 'search', value: catalogQuery, placeholder: '输入关键词查找这次讨论', 'aria-label': '查找会话标题' });
+      const catalogSelect = el('select', { 'aria-label': '选择要导入的会话' });
+      const populate = () => {
+        const matches = item => (item.title || `会话 ${item.index + 1}`).toLocaleLowerCase().includes(catalogQuery.trim().toLocaleLowerCase());
+        const filtered = localCatalog.conversations.filter(matches);
+        catalogSelect.replaceChildren(el('option', { value: '', text: `找到 ${filtered.length} / ${localCatalog.conversations.length} 个会话，请选择一个`, selected: conversationIndex === undefined }));
+        for (const item of localCatalog.conversations.filter(item => matches(item) || conversationIndex === item.index)) catalogSelect.append(el('option', { value: String(item.index), text: `${item.title || `会话 ${item.index + 1}`}${item.updatedAt && Number.isFinite(Date.parse(item.updatedAt)) ? ` · ${new Date(item.updatedAt).toLocaleDateString('zh-CN')}` : ''}${!matches(item) ? '（当前已选）' : ''}`, selected: conversationIndex === item.index }));
+      };
+      filter.addEventListener('input', () => { catalogQuery = filter.value; populate(); }); populate();
+      catalogSelect.addEventListener('change', () => { conversationIndex = catalogSelect.value === '' ? undefined : Number(catalogSelect.value); roleOverrides = {}; localPreview = null; renderSelection(); });
+      previewPanel.append(field('查找会话标题', filter), field('账号中的会话', catalogSelect));
+    }
+    const cancelSelection = button('取消选择', () => { resetSelection(); keepForm(); }, 'secondary compact');
+    if (localCatalog.kind === 'archive' && conversationIndex === undefined) { previewPanel.append(cancelSelection); return; }
+    try {
+      const firstPreview = !localPreview;
+      localPreview = previewConversation(localSource, { conversationIndex, ...(localPreview?.kind === 'conversation' ? { from: localPreview.from, to: localPreview.to } : {}), roles: roleOverrides });
+      if (firstPreview && localPreview.kind === 'conversation' && localPreview.selectedCount > modeLimit()) localPreview = previewConversation(localSource, { conversationIndex, from: localPreview.from, to: localPreview.from + modeLimit() - 1, roles: roleOverrides });
+    } catch (error) {
+      previewPanel.append(el('p', { class: 'form-error', role: 'alert', text: error.message }));
+      if (Number.isSafeInteger(error.totalMessages) && error.totalMessages > 0) {
+        const from = el('input', { type: 'number', min: 1, max: error.totalMessages, step: 1, value: 1, 'aria-label': '起始消息编号' });
+        const to = el('input', { type: 'number', min: 1, max: error.totalMessages, step: 1, value: Math.min(modeLimit(), error.totalMessages), 'aria-label': '结束消息编号' });
+        previewPanel.append(el('p', { class: 'modal-note', text: `会话共有 ${error.totalMessages} 条消息。可选择其他范围后重新预览。` }), el('div', { class: 'import-range' }, [field('从第几条开始', from), field('到第几条结束', to), button('更新预览', () => {
+          try { localPreview = previewConversation(localSource, { conversationIndex, from: Number(from.value), to: Number(to.value), roles: roleOverrides }); renderSelection(); }
+          catch (nextError) { formError(previewPanel, nextError.message); }
+        }, 'secondary compact')]));
+      }
+      previewPanel.append(cancelSelection); return;
+    }
+    const preview = localPreview;
+    const selectionStatus = el('p', { class: 'import-selection-status', role: 'status', text: preview.kind === 'graph' ? '已识别 ChatGraph 图谱，将保留图谱结构与原文。' : `已选择 ${preview.selectedCount} / ${preview.totalMessages} 条消息 · ${preview.unknownRoles} 条说话者未标注${preview.complete === 'partial' ? ' · 部分对话' : ''}` });
+    previewPanel.append(selectionStatus);
+    if (preview.kind === 'conversation') {
+      const from = el('input', { type: 'number', min: 1, max: preview.totalMessages, step: 1, value: preview.from, 'aria-label': '起始消息编号' });
+      const to = el('input', { type: 'number', min: 1, max: preview.totalMessages, step: 1, value: preview.to, 'aria-label': '结束消息编号' });
+      const changeRange = () => {
+        try {
+          localPreview = previewConversation(localSource, { conversationIndex, from: Number(from.value), to: Number(to.value), roles: roleOverrides }); renderSelection();
+        } catch (error) { formError(previewPanel, error.message); }
+      };
+      previewPanel.append(el('div', { class: 'import-range' }, [field('从第几条开始', from), field('到第几条结束', to), button('更新预览', changeRange, 'secondary compact')]), el('p', { class: 'modal-note', text: `消息编号从 1 开始，连续选择。${modeLimit() === 199 ? '原文整理每次最多 199 条；AI 深度结构化最多 500 条。' : 'AI 深度结构化每次最多 500 条。'}可在消息旁修正说话者。` }));
+      from.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); changeRange(); } });
+      to.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); changeRange(); } });
+      for (const input of [from, to]) input.addEventListener('input', () => { apply.disabled = true; selectionStatus.textContent = '范围已修改，请先点击“更新预览”检查选定内容。'; });
+      const messages = el('div', { class: 'import-message-list', 'aria-label': '选定的对话消息' });
+      for (const [index, message] of preview.messages.entries()) {
+        const number = preview.from + index;
+        const speaker = selectInput(ROLE_NAMES, message.role, value => { roleOverrides[message.id] = value; renderSelection(); });
+        speaker.setAttribute('aria-label', `第 ${number} 条消息的说话者`);
+        messages.append(el('article', { class: `import-message${message.role === 'unknown' ? ' unknown-role' : ''}` }, [el('div', { class: 'import-message-meta' }, [el('strong', { text: `第 ${number} 条` }), speaker]), el('p', { text: message.content })]));
+      }
+      previewPanel.append(messages);
+    }
+    for (const warning of preview.warnings || []) previewPanel.append(el('p', { class: 'notice', text: warning }));
+    const apply = button(preview.kind === 'graph' ? '使用这张图谱' : '使用选中的对话', () => {
+      const nextTitle = !title.value.trim() || title.value === autoFilledTitle ? preview.title.slice(0, 200) || title.value.trim() : title.value.trim();
+      const nextUrl = sourceUrlEdited ? url.value.trim() : preview.url || '';
+      const payload = { ...readInput(), text: preview.text, title: nextTitle, platform: preview.platform || platform.value, url: nextUrl };
+      if (importBytes(payload) > 2 * 1024 * 1024) return formError(previewPanel, '选定内容超过 2 MB，请缩小消息范围。');
+      if (preview.kind === 'conversation' && preview.selectedCount > modeLimit()) return formError(previewPanel, `当前模式每次最多整理 ${modeLimit()} 条消息，请缩小范围或切换整理模式。`);
+      text.value = preview.text;
+      if (!title.value.trim() || title.value === autoFilledTitle) autoFilledTitle = nextTitle;
+      title.value = nextTitle;
+      if (preview.platform) platform.value = [...platform.options].some(option => option.value === preview.platform) ? preview.platform : '其他';
+      url.value = nextUrl;
+      importCapture = preview.kind === 'conversation' ? { ...(importCapture || {}), complete: preview.complete, warnings: preview.warnings || [] } : undefined;
+      const summary = preview.kind === 'graph' ? '已选定图谱' : `已选定 ${preview.selectedCount} 条消息${preview.complete === 'partial' ? '（部分对话）' : ''}`;
+      resetSelection(); fileInfo.textContent = `${summary} · 可再次检查或调整`; keepForm(); text.focus();
+    }, 'primary compact', 'check');
+    selectionStatus.after(el('div', { class: 'import-selection-actions' }, [cancelSelection, apply]));
+  }
   const keepForm = () => {
     formRevision++;
     if (state.importing || activeJob) return;
+    if (!safeToRetain()) return;
     operation.input = readInput(); operation.updatedAt = Date.now();
     if (operation.input.text || operation.input.title) retainImport(operation).catch(() => toast('导入草稿未能保存到浏览器，请保留原文后再刷新。', true));
   };
-  dialog.body.addEventListener('input', keepForm);
-  dialog.body.addEventListener('change', event => { if (event.target !== file) keepForm(); });
-  const lockForm = locked => $$('input,textarea,select', dialog.body).forEach(control => { control.disabled = locked; });
+  dialog.body.addEventListener('input', event => {
+    if (event.target === text && selecting) resetSelection();
+    if (event.target === url) sourceUrlEdited = true;
+    if (!previewPanel.contains(event.target)) keepForm();
+  });
+  dialog.body.addEventListener('change', event => {
+    if (event.target !== file && !previewPanel.contains(event.target)) keepForm();
+    if (event.target.name === 'import-mode' && selecting) renderSelection();
+  });
+  const lockForm = locked => $$('input,textarea,select,button', dialog.body).forEach(control => { control.disabled = locked; });
   if (activeJob) {
     lockForm(true);
     dialog.body.append(el('p', { class: 'notice', text: '已找回这次整理的原文与任务编号。继续时只读取同一个任务，不会再次调用模型。' }));
@@ -823,8 +944,18 @@ function openImport(options = {}) {
     state.importing = false; closeModal();
   }, 'secondary');
   const submit = button(activeJob ? '继续上次整理' : append ? '追加到图谱' : '开始整理', async () => {
+    if (!activeJob && selecting) return formError(dialog.body, '请先确认要导入的会话与消息范围。');
     if (!activeJob && !text.value.trim()) return formError(dialog.body, '请先粘贴对话内容，或上传对话文件。');
     if (!activeJob && url.value && !/^https?:\/\//i.test(url.value)) return formError(dialog.body, '出处链接应以 http:// 或 https:// 开头。');
+    if (!activeJob) {
+      try {
+        const catalog = inspectConversationFile(text.value);
+        if (catalog.kind === 'archive') { prepareImport(text.value); return; }
+        const checked = previewConversation(text.value);
+        if (checked.kind === 'conversation' && checked.totalMessages > modeLimit()) { prepareImport(text.value); return formError(previewPanel, `当前模式每次最多整理 ${modeLimit()} 条消息，请先选择范围。`); }
+        if (importBytes(readInput()) > 2 * 1024 * 1024) { prepareImport(text.value); return formError(previewPanel, '导入内容超过 2 MB，请先选择较小的范围。'); }
+      } catch (error) { return formError(dialog.body, error.message); }
+    }
     const recovering = Boolean(activeJob);
     if (!recovering) operation.input = readInput();
     const mode = operation.input.mode;

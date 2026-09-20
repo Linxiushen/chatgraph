@@ -1,4 +1,4 @@
-# ChatGraph 0.2 接口与数据契约
+# ChatGraph 0.3 接口与数据契约
 
 Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 ChatGPT MCP 服务在独立目录安装依赖。公开字段均经白名单验证，凭据不属于图谱模型。
 
@@ -51,11 +51,13 @@ Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 Chat
 | POST | /api/login | 托管工作区密码登录 `{password}` |
 | POST | /api/logout | 清除登录会话 |
 
-任务为 `{id,kind,status,progress,message,createdAt,updatedAt,result?,error?}`；status 为 queued/running/completed/failed/cancelled；progress 为 0–100。队列单并发，最多五个待运行任务。客户端在请求前保留 UUID，相同 UUID 的并发/重复提交及服务重启后的查询不会启动第二次模型调用。只持久化状态和结果，不持久化请求中的模型配置；中断任务在重启后明确失败，未自动重新收费。取消不能退还已由模型服务消耗的 token。
+任务为 `{id,kind,status,progress,message,createdAt,updatedAt,result?,error?}`；status 为 queued/running/completed/failed/cancelled；progress 为 0–100。队列单并发，最多五个待运行任务。客户端在请求前保留 UUID，相同 UUID 的并发/重复提交及服务重启后的查询不会启动第二次模型调用。只持久化状态和结果，不持久化请求中的模型配置；中断任务在重启后明确失败，未自动重新收费。任务记录真正不存在才返回 404；损坏返回 422，无法读取返回 503，后两者阻止相同 UUID 新建。任务状态写入经 fsync 后原子替换。取消不能退还已由模型服务消耗的 token。
 
 AI 设置可由服务器 `.env` 或当前页面内存提供。网页 api 结构 `{baseUrl,model,apiKey,reasoningEffort?}`。自定义地址不得获取其他端点的服务器密钥。原始对话是资料，不是系统指令。
 
 ## 浏览器与托管
+
+账号导出的 JSON（最多 25 MB）只在浏览器本地解析；用户选择会话、连续消息范围和角色后，转换为标准 messages/source JSON。解析器由浏览器与服务端共享。只保存应用后的选定内容；账号原文件不写入导入草稿，也不发送到服务端。导入消息、节点与普通请求体的原有上限保持不变。
 
 草稿放在当前来源的 IndexedDB，只包含图谱/原文编辑数据，不包含 API 设置。自动保存保留服务器 revision，409 显示复制草稿或载入新版本的选择。移动端默认大纲。
 
