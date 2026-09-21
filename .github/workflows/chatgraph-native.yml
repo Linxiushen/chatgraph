@@ -1,0 +1,56 @@
+name: ChatGraph Native Apps
+on:
+  push:
+    paths: ['chatgraph/mobile/android/**', 'chatgraph/mobile/ios/**', '.github/workflows/chatgraph-native.yml']
+  pull_request:
+    paths: ['chatgraph/mobile/android/**', 'chatgraph/mobile/ios/**', '.github/workflows/chatgraph-native.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile test APK and run Android lint
+        working-directory: chatgraph/mobile/android
+        run: bash ./gradlew --no-daemon :app:assembleDebug :app:lintDebug
+      - name: Verify APK signature and package
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose chatgraph/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging chatgraph/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatgraph-android-apk
+          path: |
+            chatgraph/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            chatgraph/mobile/android/app/build/reports/lint-results-debug.html
+          retention-days: 14
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile iPhone app and share extension without distribution signing
+        working-directory: chatgraph/mobile/ios
+        run: xcodebuild -project ChatGraph.xcodeproj -scheme ChatGraph -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package unsigned iOS binary
+        working-directory: chatgraph/mobile/ios
+        run: |
+          mkdir -p native-artifacts/Payload
+          cp -R build/Build/Products/Release-iphoneos/ChatGraph.app native-artifacts/Payload/ChatGraph.app
+          cd native-artifacts
+          /usr/bin/zip -qry ChatGraph-iOS-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatgraph-ios-unsigned
+          path: chatgraph/mobile/ios/native-artifacts/ChatGraph-iOS-unsigned.ipa
+          retention-days: 14

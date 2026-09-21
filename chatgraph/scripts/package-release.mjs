@@ -17,9 +17,9 @@ const paths = [
   'chatgraph/lib', 'chatgraph/public', 'chatgraph/extension', 'chatgraph/integrations',
   'chatgraph/deploy', 'chatgraph/test', 'chatgraph/scripts', 'chatgraph/research', 'chatgraph/docs', 'chatgraph/mobile',
 ];
-const forbidden = new Set(['.git', '.data', '.history', '.recovery', '.jobs', '.shares', 'node_modules', 'test-output', 'dist', 'coverage', '.DS_Store']);
-const extensions = new Set(['.mjs', '.js', '.css', '.html', '.json', '.webmanifest', '.md', '.txt', '.svg', '.png', '.yaml', '.yml', '.sh']);
-const allowedHiddenPaths = new Set(['.dockerignore', 'chatgraph/.gitignore', 'chatgraph/.env.example']);
+const forbidden = new Set(['.git', '.data', '.history', '.recovery', '.jobs', '.shares', 'node_modules', 'test-output', 'dist', 'coverage', '.DS_Store', 'build', '.gradle', 'xcuserdata', 'native-artifacts', 'local.properties']);
+const extensions = new Set(['.mjs', '.js', '.css', '.html', '.json', '.webmanifest', '.md', '.txt', '.svg', '.png', '.yaml', '.yml', '.sh', '.bat', '.java', '.gradle', '.properties', '.xml', '.swift', '.plist', '.pbxproj', '.xcscheme', '.xcworkspacedata', '.entitlements', '.xcprivacy']);
+const allowedHiddenPaths = new Set(['.dockerignore', 'chatgraph/.gitignore', 'chatgraph/.env.example', 'chatgraph/mobile/android/.gitignore', 'chatgraph/mobile/ios/.gitignore']);
 const upstreamRevision = '72c750bb070d95171dbb2244e5b62b1b7da69c12';
 
 /** Explicit source allowlist; runtime data and credentials are never traversed. */
@@ -53,7 +53,7 @@ export async function buildRelease({ repositoryDir = repository, outputDir } = {
       return;
     }
     if (!stat.isFile()) return;
-    const allowedSpecial = ['LICENSE', 'Dockerfile', 'Caddyfile', '.env.example', '.gitignore', '.dockerignore'].includes(name);
+    const allowedSpecial = ['LICENSE', 'GRADLE-LICENSE', 'Dockerfile', 'Caddyfile', '.env.example', '.gitignore', '.dockerignore', 'gradlew', 'gradle-wrapper.jar'].includes(name);
     if (!allowedSpecial && !extensions.has(path.extname(name))) return;
     if (stat.size > 8 * 1024 * 1024) throw new Error(`发布源文件超过 8 MB，请检查：${relative}`);
     entries.set(`chatgraph-${metadata.version}/${relative}`, await fs.readFile(target));

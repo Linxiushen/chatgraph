@@ -1,0 +1,6 @@
+build/
+*.xcuserstate
+xcuserdata/
+*.ipa
+*.xcarchive/
+ExportOptions.local.plist

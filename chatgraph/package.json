@@ -1,6 +1,6 @@
 {
   "name": "chatgraph",
-  "version": "0.4.0-beta.1",
+  "version": "0.4.1-beta.1",
   "private": true,
   "description": "Turn AI conversations into editable, source-linked knowledge maps",
   "type": "module",
@@ -12,6 +12,7 @@
     "test": "node --test test/*.test.mjs",
     "test:browser": "node scripts/browser-check.mjs && node test/editor-browser-check.mjs && node test/import-browser-check.mjs && node test/mobile-browser-check.mjs",
     "test:live": "node scripts/evaluate-model.mjs --live",
-    "package": "node scripts/package-release.mjs"
+    "package": "node scripts/package-release.mjs",
+    "package:native": "node scripts/package-native.mjs"
   }
 }

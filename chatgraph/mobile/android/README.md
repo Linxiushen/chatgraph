@@ -1,0 +1,53 @@
+# ChatGraph Android 原生测试版
+
+这是可编译安装的 Android App，不是把网页文件改名为 APK。支持 Android 8.0（API 26）及以上版本，建议使用更新后的 Android System WebView。
+
+## 安装与首次使用
+
+1. 在手机上解压发布的 Android 压缩包，打开其中的 `ChatGraph-android-0.4.1-beta.1-debug.apk`，按系统提示允许本次安装。
+2. 首次启动填写已部署的 **ChatGraph HTTPS 根地址**，例如 `https://graph.example.com`。示例域名不可直接使用。手机的 `127.0.0.1` 不是电脑上的服务；本包不包含服务器或 API 密钥。
+3. 点“打开工作区”，根据服务器要求登录，即可粘贴、选择文件、查看或编辑图谱。
+4. 在其他 App 的系统分享菜单中选择 **ChatGraph 对话图谱**。支持文字、URL 或单个 UTF-8 TXT / Markdown / JSON 文件。
+5. 回到 ChatGraph 点“导入这份内容”。App 把内容交给当前 HTTPS 工作区的手机收件箱；预览后点击“检查并整理”，再按网页流程确认生成。
+
+来源 App 分享的内容由其决定。若它只给了分享链接，ChatGraph 仍需原文，不能据此自动读取其他 App 的聊天记录。网页和原生分享菜单是否出现、文件提供器兼容性仍需真机验证。
+
+## 本机存储与接入边界
+
+- 原生收件箱最多 5 份、合计 50 MB；文字最多 2 MB，单个文件最多 25 MB。文件先读到 App 私有目录，读取失败时不会保存半份内容。
+- 本机副本保留到网页明确确认 IndexedDB 写入成功，或用户手动删除。退出、重启 App 后仍可继续；原生目录不进入 Android 云备份或设备迁移备份。
+- 网页收件箱有独立的 24 小时清理规则。不要把尚未完成整理的网页收件箱当作永久知识库。
+- 本机副本导入成功后会删除；不会自动触发 AI，也不会上传到未配置的工作区。
+- App 仅在配置的精确 HTTPS 源内打开网页；无 `addJavascriptInterface`、无明文 HTTP、无 SSL 证书绕过，不申请读取通知、无障碍、录屏或全盘存储权限。
+- 外部 HTTPS 链接交给系统浏览器；不转发 App Cookie。原生 WebView 暂不保存 Blob 导出，导出 Markdown / PPTX 等请在系统浏览器打开同一工作区操作。
+- 这是供自行安装和测试的 **debug 签名 APK**，不是 Google Play 正式版。后续正式签名不同可能需要先卸载测试版，卸载会删除本机待导入内容；请先完成整理。
+
+## 从源码构建
+
+需要 JDK 17、Android SDK Platform 35、Build Tools 35.0.0 和 Gradle 8.9。无 AndroidX 或其他运行时依赖；首次 Gradle 构建需联网获取官方构建插件。
+
+```sh
+export ANDROID_HOME=/你的/Android/sdk
+export JAVA_HOME=/你的/jdk-17
+./gradlew :app:assembleDebug :app:lintDebug
+```
+
+标准产物：`app/build/outputs/apk/debug/app-debug.apk`。
+
+若源码环境缺少 `gradle/wrapper/gradle-wrapper.jar`，先用已安装的 Gradle 8.9 运行 `gradle wrapper --gradle-version 8.9`；发布源码包应包含 wrapper。禁止将 `local.properties`、私有签名密钥、服务端 `.env` 或 API Key 放入源码包。
+
+本地打包 APK 可使用：
+
+```sh
+./package-debug.sh
+```
+
+## 建议真机验收
+
+- 初次配置 HTTPS、登录、正常收件、仅 URL 提示、单个文件和错误编码提示。
+- 断网收件后杀进程，重新打开并恢复；多个待导入内容互不覆盖。
+- 工作区无法连接、收件箱已满、拒绝网站存储时，本机副本仍存在。
+- 证书错误、非 HTTPS 配置、外部链接、新窗口链接和文件选择边界。
+- Android 8 与 Android 15 的分享菜单、屏幕旋转、键盘和系统导航。
+
+实际构建检查和真机测试情况以发布说明为准。
