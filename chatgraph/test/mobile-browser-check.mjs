@@ -25,7 +25,7 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: true, args: ['--ignore-certificate-errors'] });
 const errors = [], checks = [];
 const check = name => { checks.push(name); console.log(`PASS ${name}`); };
-let page, hostedServer, tlsServer;
+let page, hostedServer, tlsServer, recoveryServer, releaseRecoveryProvider;
 
 const ready = async page => {
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
@@ -237,14 +237,104 @@ try {
   assert.equal(recreated.retained.text, '用户：RECREATED_RECEIPT');
   check('unchanged receipts preserve revisions and recreated receipts cannot be deleted by stale completion');
 
+  let mockProviderCalls = 0, modelStarted;
+  const started = new Promise(resolve => { modelStarted = resolve; });
+  const modelGate = new Promise(resolve => { releaseRecoveryProvider = resolve; });
+  recoveryServer = createAppServer({ dataDir: path.join(dataDir, 'process-recovery'), env: { CHATGRAPH_API_KEY: 'synthetic-recovery-fixture', CHATGRAPH_MODEL: 'fixture-model' }, fetchImpl: async () => {
+    mockProviderCalls++; modelStarted(); await modelGate;
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ title: '手机进程恢复', nodes: [
+      { id: 'root', label: '手机进程恢复', type: 'topic', stance: 'unknown', status: 'open', parentId: null, sourceIds: [] },
+      { id: 'mobile-recovered-choice', label: '继续同一个模型任务', type: 'claim', stance: 'user', status: 'confirmed', parentId: 'root', sourceIds: ['m-1'] },
+    ], edges: [] }) } }] });
+  } });
+  recoveryServer.listen(0, '127.0.0.1'); await once(recoveryServer, 'listening');
+  const recoveryBase = `http://127.0.0.1:${recoveryServer.address().port}`;
+  const recoveryContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  let jobPosts = 0; const jobGets = [];
+  recoveryContext.on('request', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/jobs' && request.method() === 'POST') jobPosts++;
+    if (pathname.startsWith('/api/jobs/') && request.method() === 'GET') jobGets.push(pathname.split('/').at(-1));
+  });
+  const original = await recoveryContext.newPage();
+  original.on('pageerror', error => errors.push(error.message));
+  await original.goto(`${recoveryBase}/mobile-inbox.html`); await ready(original);
+  await original.locator('#share-title').fill('PROCESS_RECOVERY_MOBILE');
+  await original.locator('#share-text').fill('用户：我决定让手机重启后继续同一个模型任务。');
+  await original.locator('#continue-import').click();
+  await original.getByRole('button', { name: '使用选中的对话', exact: true }).click();
+  await original.getByRole('button', { name: '开始整理', exact: true }).click();
+  await Promise.race([started, new Promise((_, reject) => setTimeout(() => reject(new Error('Mobile recovery model did not start')), 5000))]);
+  const receipt = await original.evaluate(async () => (await (await import('/draft-store.js')).draftStore.all()).find(record => record.kind === 'pending-import' && record.input.title === 'PROCESS_RECOVERY_MOBILE'));
+  assert.ok(receipt.jobId); assert.ok(receipt.mobileShareId);
+  const untouched = await original.evaluate(async () => {
+    const { draftStore } = await import('/draft-store.js');
+    const operations = [
+      { operationId: crypto.randomUUID(), phase: 'draft', input: { title: 'ORDINARY_PRIVATE_DRAFT', text: '用户：普通窗口草稿仍然隔离。' } },
+      { operationId: crypto.randomUUID(), phase: 'failed', jobId: crypto.randomUUID(), input: { title: 'ORDINARY_PRIVATE_FAILED', text: '用户：普通失败原文保留。' } },
+      { operationId: crypto.randomUUID(), phase: 'failed', jobId: crypto.randomUUID(), mobileShareId: crypto.randomUUID(), mobileShareRevision: 1, input: { title: 'OTHER_MOBILE_FAILED', text: '用户：其他失败原文保留。' } },
+      { operationId: crypto.randomUUID(), phase: 'draft', mobileShareId: crypto.randomUUID(), mobileShareRevision: 1, input: { title: 'OTHER_MOBILE_DRAFT', text: '用户：其他新手机草稿保留。' } },
+    ];
+    for (const operation of operations) await draftStore.putImport(operation);
+    const graph = await (await fetch('/api/demo')).json(); graph.title = 'UNRELATED_GRAPH_DRAFT';
+    await draftStore.put({ graph, dirty: true, saved: false, autoSavePaused: true });
+    return { operationIds: operations.map(item => item.operationId), owner: sessionStorage.getItem('chatgraph-draft-owner') };
+  });
+  await original.close();
+
+  const restored = await recoveryContext.newPage();
+  restored.on('pageerror', error => errors.push(error.message));
+  await restored.goto(recoveryBase); await restored.waitForSelector('.outline-card');
+  assert.notEqual(await restored.evaluate(() => sessionStorage.getItem('chatgraph-draft-owner')), untouched.owner);
+  assert.equal(await restored.locator('#resume-import').textContent(), '继续上次整理（3）');
+  await restored.getByRole('button', { name: '展开导航', exact: true }).click();
+  await restored.locator('#resume-import').click();
+  const recoveryChoices = await restored.getByRole('dialog').innerText();
+  assert.ok(recoveryChoices.includes('OTHER_MOBILE_FAILED') && recoveryChoices.includes('OTHER_MOBILE_DRAFT'));
+  assert.ok(!recoveryChoices.includes('ORDINARY_PRIVATE'));
+  await restored.locator('.history-entry').filter({ hasText: 'PROCESS_RECOVERY_MOBILE' }).getByRole('button', { name: '继续', exact: true }).click();
+  assert.equal(await restored.getByLabel('对话内容', { exact: true }).isDisabled(), true);
+  await restored.getByRole('button', { name: '继续上次整理', exact: true }).click();
+  await restored.waitForFunction(async operationId => (await (await import('/draft-store.js')).draftStore.all()).filter(record => record.kind === 'pending-import' && record.operationId === operationId).length === 2, receipt.operationId);
+  await restored.close();
+
+  const continued = await recoveryContext.newPage();
+  continued.on('pageerror', error => errors.push(error.message));
+  await continued.goto(`${recoveryBase}/#mobile-import=${receipt.mobileShareId}`);
+  await continued.getByRole('button', { name: '继续上次整理', exact: true }).waitFor();
+  assert.equal(await continued.locator('#resume-import').textContent(), '继续上次整理（3）', 'Copies from earlier processes must collapse to one operation');
+  assert.equal(await continued.getByLabel('对话内容', { exact: true }).isDisabled(), true);
+  await continued.route('**/api/graphs', route => route.request().method() === 'POST' ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic save interruption' }) }) : route.continue());
+  await continued.getByRole('button', { name: '继续上次整理', exact: true }).click();
+  await continued.waitForFunction(() => document.querySelector('.import-progress')?.hidden === false);
+  releaseRecoveryProvider();
+  await continued.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.ok((await queue(continued)).some(item => item.id === receipt.mobileShareId), 'Failed graph save must preserve mobile inbox original');
+  const pendingCopies = await continued.evaluate(async operationId => (await (await import('/draft-store.js')).draftStore.all()).filter(record => record.kind === 'pending-import' && record.operationId === operationId), receipt.operationId);
+  assert.equal(pendingCopies.length, 3); assert.ok(pendingCopies.every(record => record.jobId === receipt.jobId));
+  check('fresh mobile sessions recover one paid job from sidebar or receipt link while ordinary drafts stay isolated');
+
+  await continued.unroute('**/api/graphs');
+  await continued.getByRole('button', { name: '保存', exact: true }).click();
+  await continued.waitForFunction(() => document.querySelector('#save-state')?.textContent.includes('已保存'));
+  const remaining = await continued.evaluate(async () => (await (await import('/draft-store.js')).draftStore.all()));
+  assert.equal(remaining.filter(record => record.kind === 'pending-import' && record.operationId === receipt.operationId).length, 0);
+  for (const operationId of untouched.operationIds) assert.equal(remaining.filter(record => record.operationId === operationId).length, 1);
+  assert.ok(remaining.some(record => record.graph?.title === 'UNRELATED_GRAPH_DRAFT' && record.owner === untouched.owner));
+  assert.ok(!(await queue(continued)).some(item => item.id === receipt.mobileShareId));
+  assert.equal(mockProviderCalls, 1); assert.equal(jobPosts, 1);
+  assert.ok(jobGets.length > 0 && jobGets.every(id => id === receipt.jobId));
+  check('durable save clears only matching mobile receipt copies across owners and retains unrelated failed/new originals');
+
   assert.equal(paidCalls, 0); assert.deepEqual(errors, []);
   await writeFile(path.join(output, 'mobile-browser-check.json'), JSON.stringify({ passed: true, checks, pageErrors: errors, realDeviceTested: false }, null, 2));
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(output, 'mobile-browser-failure.png'), fullPage: true }).catch(() => {});
   throw error;
 } finally {
+  releaseRecoveryProvider?.();
   await browser.close();
-  for (const active of [tlsServer, hostedServer, server].filter(Boolean)) {
+  for (const active of [tlsServer, hostedServer, recoveryServer, server].filter(Boolean)) {
     active.closeAllConnections(); await new Promise(resolve => active.close(resolve));
   }
   await rm(dataDir, { recursive: true, force: true });

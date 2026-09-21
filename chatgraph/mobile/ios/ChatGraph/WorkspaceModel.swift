@@ -34,7 +34,15 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         guard !["localhost", "127.0.0.1", "::1"].contains(host.lowercased()) else {
             throw ShareFailure("手机的 localhost 是手机自身。请填写手机能访问的 HTTPS 工作区。")
         }
-        return url
+        guard var canonical = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw ShareFailure("工作区地址无效。")
+        }
+        canonical.scheme = "https"
+        canonical.host = host.lowercased()
+        canonical.path = ""
+        if canonical.port == 443 { canonical.port = nil }
+        guard let result = canonical.url else { throw ShareFailure("工作区地址无效。") }
+        return result
     }
 
     func configure(_ raw: String) throws {
@@ -86,18 +94,20 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         if (location.origin !== expectedOrigin) throw new Error('工作区已切换，请重试');
         const api = await import('/mobile.js');
         const key = 'chatgraph:native-receipt:' + input.id;
+        const normalized = api.normalizeMobileShare(input);
+        const matches = candidate => candidate && ['title','text','url','fileName'].every(k => candidate[k] === normalized[k]);
         let record = null;
         try {
           const receipt = JSON.parse(localStorage.getItem(key) || 'null');
           if (receipt && typeof receipt.id === 'string') record = await api.readMobileShare(receipt.id);
+          if (!matches(record)) record = null;
         } catch (_) {}
         if (!record) {
           // A previous native acknowledgement may have been interrupted. Reuse an
           // identical durable entry before writing another copy.
           for (const entry of await api.listMobileShares()) {
             const candidate = await api.readMobileShare(entry.id);
-            const normalized = api.normalizeMobileShare(input);
-            if (candidate && ['title','text','url','fileName'].every(k => candidate[k] === normalized[k])) {
+            if (matches(candidate)) {
               record = candidate; break;
             }
           }
@@ -105,7 +115,7 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         if (!record) record = await api.saveMobileShare(input);
         try { localStorage.setItem(key, JSON.stringify({ id: record.id })); } catch (_) {}
         const saved = await api.readMobileShare(record.id);
-        if (!saved) throw new Error('工作区尚未持久保存，请重试');
+        if (!matches(saved)) throw new Error('工作区尚未持久保存原文，请重试');
         return { nativeId: input.id, id: saved.id };
         """
         do {

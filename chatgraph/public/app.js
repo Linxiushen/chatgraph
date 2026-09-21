@@ -748,7 +748,10 @@ async function retainImport(operation) {
   renderPendingImports();
 }
 async function clearImport(operation) {
-  await draftStore.removeImport(operation.operationId);
+  // Called only after the graph is durably saved. Clear copies left by earlier
+  // mobile processes, without touching other imports or graph-edit namespaces.
+  if (operation.mobileShareId) await removeMobileShare(operation.mobileShareId, operation.mobileShareRevision).catch(() => toast('图谱已保存，收件箱原件暂未清除，可回收件箱手动删除。', true));
+  await draftStore.removeImport(operation.operationId, operation.mobileShareId);
   state.pendingImports = state.pendingImports.filter(item => item.operationId !== operation.operationId);
   renderPendingImports();
 }
@@ -1033,7 +1036,6 @@ function openImport(options = {}) {
       // Retain both the task receipt and graph draft until the result is saved.
       await draftStore.put(state.drafts.get(graph.id));
       operation.phase = 'completed'; operation.resultGraphId = graph.id; await retainImport(operation);
-      if (operation.mobileShareId) await removeMobileShare(operation.mobileShareId, operation.mobileShareRevision).catch(() => toast('图谱已生成，收件箱原件暂未清除，可回收件箱手动删除。', true));
       await saveGraphId(graph.id, { silent: true });
       if (!state.dirty) await clearImport(operation);
       state.importing = false; closeModal();
@@ -1351,7 +1353,7 @@ async function boot() {
   if (results[0].status === 'fulfilled') state.demo = results[0].value;
   const chooseSelection = graph => graph.nodes.find(node => node.id === 'demo-ownership')?.id || graph.nodes.find(node => node.type === 'claim' && node.status === 'confirmed')?.id || graph.nodes.find(node => node.type === 'claim')?.id || null;
   if (results[3].status === 'fulfilled') {
-    state.pendingImports = results[3].value.filter(record => record.kind === 'pending-import' && draftStore.owns(record) && record.operationId && record.input);
+    state.pendingImports = draftStore.recoverableImports(results[3].value);
     const validDrafts = results[3].value.filter(draft => draft?.dirty && draft.graph?.id && Array.isArray(draft.graph.nodes) && Array.isArray(draft.graph.messages));
     state.foreignDrafts = validDrafts.filter(draft => !draftStore.owns(draft));
     const candidates = validDrafts.filter(draft => draftStore.owns(draft));
@@ -1391,7 +1393,7 @@ boot().then(async () => {
   if (!id) return;
   try {
     const mobile = await readMobileShare(id);
-    const existing = mobile && state.pendingImports.find(item => item.mobileShareId === id && item.mobileShareRevision === mobile.revision);
+    const existing = state.pendingImports.find(item => item.mobileShareId === id && (!mobile || item.mobileShareRevision === mobile.revision));
     if (existing) return openImport({ resume: existing });
     if (mobile) openImport({ mobile });
     else { clearPendingMobileShare(id); toast('这条手机导入已处理或过期，请回到手机收件箱重新选择。'); }

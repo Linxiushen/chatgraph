@@ -2,6 +2,16 @@
 
 日期：2026-09-21。上游基线：`72c750bb070d95171dbb2244e5b62b1b7da69c12`。以下区分代码回归、真实模型、浏览器模拟与外部尚未完成的验收。
 
+## 0.4.1-beta.1 原生 App 与独立压缩包
+
+新增 Android 原生 Java App、iOS SwiftUI 主 App 与分享扩展，以及分别包含真实编译产物的两个 ZIP。Android 最低 API 26、target/compile 35，使用 Gradle 8.9 / AGP 8.7.3 / JDK 17；`assembleDebug` 和 `lintDebug` 通过，APK Signature Scheme v2 校验通过。APK 仅声明 INTERNET 权限，不使用全盘存储、无障碍、通知监听或录屏权限。lint 的 JavaScript 开启及启动图标外形提示仍保留；JavaScript 是图谱工作区运行所需，原生交接限制为所配置的 HTTPS 来源。
+
+iOS 工程包含共享 Scheme、主 App 和嵌入的 Share Extension，在 GitHub macOS Xcode 环境进行实际 iphoneos 构建，关闭分发签名后生成 IPA。Swift / plist 检查以及 11 项实际编译运行的输入验证通过。IPA 没有个人签名、描述文件或 Apple 团队凭据，不能直接装到普通 iPhone；需要开发者自行配置两个 Target 和 App Group 后签名。
+
+核心回归 85 项通过，移动浏览器检查增加到 12 组：连续关闭原窗口并以新 owner 恢复正在运行的付费任务，验证只提交一个任务、只调用一次模拟模型；保存失败时保留原文，成功保存后仅清理匹配任务的收件副本，其他图谱和待处理原件继续保留。Android 原生界面切换保留 WebView，进程重启由网页跨会话任务恢复承接。交接回执会核对原文，网页中后来编辑的内容不会导致误删原生副本。
+
+原生编译和静态检查尚不能代替 Android/iPhone 真机验收；未完成实际系统分享、设备杀进程、第三方文件提供器、Apple 签名或商店发布。本轮没有新增真实模型调用。手机图谱功能需可访问的 0.4.1+ HTTPS 工作区。
+
 ## 0.4.0-beta.1 手机入口
 
 新增 PWA、手机收件箱、Web Share Target、Safari 快捷指令脚本与 HTTPS 扩展目标。核心测试 85 项、扩展单元测试 4 项、MCP/OAuth 测试 7 项通过。本轮沿用既有模型配置，没有新增付费模型调用。

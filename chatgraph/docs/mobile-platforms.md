@@ -2,6 +2,8 @@
 
 ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合系统分享、粘贴、文件导入和 Safari 快捷指令。打开 ChatGraph 不会自动获得其他 AI App 的聊天记录。手机系统允许接收用户主动交出的内容；浏览器采集需要用户在相应网页中运行。
 
+0.4.1 另提供 Android 原生 App 和 iOS 主 App / 分享扩展。Android 独立压缩包附测试签名 APK，iOS 包附未签名 IPA 与 Xcode 工程；iOS 安装需要配置自己的 Apple 签名和 App Group。首次启动均需填写已部署的 HTTPS 工作区。详见 [Android](../mobile/android/README.md) 与 [iOS](../mobile/ios/README.md)；以下 PWA 接入方式仍然保留。
+
 ## 本轮交付与平台边界
 
 | 入口 | 能获得什么 | 平台与条件 |
@@ -11,7 +13,8 @@ ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合�
 | 系统分享至 ChatGraph | 分享方实际提供的标题、文本、链接或支持的文件 | 支持 Web Share Target 的 Android 浏览器；先安装 PWA，系统面板是否出现以设备为准 |
 | Safari 快捷指令采集 | 当前 Safari 页面已渲染的对话；角色无法识别时标为未知 | iPhone / iPad；启用脚本、配置快捷指令后从 Safari 分享菜单运行 |
 | Safari Web Extension | 获准访问的 Safari 网页内容 | 原理可行；需打包、兼容性验证、用户安装授权及真机测试，本仓库不附已签名 iOS 安装包 |
-| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的内容 | 后续原生增强；需 Android 构建、签名与真机测试，本轮不声称已交付 APK |
+| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的文字或单个文件 | 0.4.1 提供测试签名 APK，需自行安装、配置工作区并真机验证 |
+| iOS 原生分享扩展 | 宿主主动提供的文本、链接或单个文件，先保存到 App Group | 0.4.1 提供未签名 IPA / Xcode 工程，需开发者签名和 App Group 能力后真机安装 |
 
 桌面 Chrome 扩展不能当成 Android Chrome 扩展安装。Google 的“在手机上安装扩展”帮助实际指 **Add to Desktop**，最后在电脑 Chrome 使用。其他 Android 浏览器的扩展支持各不相同，本轮不据此声称已经适配。
 
@@ -57,7 +60,7 @@ iOS 沙箱不允许普通 App 任意读取其他 App 的文件和聊天数据库
 
 Android 的分享 Intent 也只是接收主动分享的数据。无障碍读取和屏幕录制/OCR是另一类能力，受到授权、前台界面、平台政策、隐藏内容和识别误差等限制，不能可靠地等同于完整会话同步；本轮不依赖这些方式。
 
-后续若要降低操作次数，应优先实现 iOS 原生 Share Extension、Android 原生分享接收器与经过真机验证的 Safari Web Extension。它们能让“分享给 ChatGraph”更自然，仍然需要上游 App 实际提供正文或用户在网页中主动采集。
+0.4.1 实现的 iOS Share Extension、Android 分享接收器让“分享给 ChatGraph”更直接，仍然需要上游 App 实际提供正文；Safari Web Extension 分发及各原生入口真机验证仍待完成。
 
 ## 验证范围与原生构建现状
 

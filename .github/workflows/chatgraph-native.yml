@@ -18,6 +18,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile test APK and run Android lint
@@ -39,6 +42,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Validate native inputs and Xcode source metadata
+        run: bash chatgraph/mobile/ios/scripts/check-source.sh
       - name: Compile iPhone app and share extension without distribution signing
         working-directory: chatgraph/mobile/ios
         run: xcodebuild -project ChatGraph.xcodeproj -scheme ChatGraph -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build

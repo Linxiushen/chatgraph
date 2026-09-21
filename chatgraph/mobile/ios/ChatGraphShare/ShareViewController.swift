@@ -56,11 +56,13 @@ final class ShareViewController: UIViewController {
         do {
             let items = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
             let providers = items.flatMap { $0.attachments ?? [] }
-            guard !providers.isEmpty, providers.count <= 8 else {
+            let attributedText = items.compactMap { $0.attributedContentText?.string }.joined(separator: "\n\n")
+            guard (!providers.isEmpty || !attributedText.isEmpty), providers.count <= 8 else {
                 throw ShareFailure("请分享一段文字、一个链接或一个对话文件。")
             }
             var values: [PendingShare] = []
             for provider in providers { values.append(try await Self.read(provider)) }
+            if providers.isEmpty { values.append(try PendingShare(text: attributedText).validated()) }
             let files = values.filter { !$0.fileName.isEmpty }
             guard files.count <= 1 else { throw ShareFailure("一次只接收一个对话文件，请分别分享。") }
             var record: PendingShare

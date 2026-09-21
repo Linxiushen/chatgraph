@@ -69,6 +69,8 @@ AI 设置可由服务器 `.env` 或当前页面内存提供。网页 api 结构 
 
 `mobile.js` 对文字限 2 MB、单文件限 25 MB，仅接收 UTF-8 TXT/Markdown/JSON；拒绝二进制、多个文件、不安全来源链接。纯 URL 表示链接，无对话原文。收件箱最多 5 份、合计 50 MB，24 小时后下次访问时清理，可主动删除。收件箱可暂存完整账号导出，只有在工作台选择的会话/范围进入导入草稿及后续请求；成功生成并保留图谱草稿后移除收件原件。
 
-收件箱以 sessionStorage 和 `#mobile-import=<UUID>` 传递记录 ID，URL 不包含对话。刷新后沿用已保留的导入任务，避免重复调用模型。公共安装和收件界面使用精确静态资源白名单；知识库/API 的身份和来源校验保持有效。Service Worker 只缓存公共收件界面、图标和离线说明，不缓存编辑器、API 或私有图谱。离线暂存需先在线打开入口，联网后才能生成/保存图谱。
+收件箱以 sessionStorage 和 `#mobile-import=<UUID>` 传递记录 ID，URL 不包含对话。刷新后沿用已保留的导入任务，避免重复调用模型。0.4.1 手机任务还可跨浏览器会话 owner 恢复同一任务编号；普通图谱编辑和非手机导入仍按标签页隔离。图谱保存成功才清理同一 operationId / mobileShareId 的收件与任务副本。公共安装和收件界面使用精确静态资源白名单；知识库/API 的身份和来源校验保持有效。Service Worker 只缓存公共收件界面、图标和离线说明，不缓存编辑器、API 或私有图谱。离线暂存需先在线打开入口，联网后才能生成/保存图谱。
+
+原生 Android / iOS 接收用户主动分享的数据，先写设备私有目录或 App Group。用户点击导入后，在配置的 HTTPS WebView 来源执行 `mobile.js` 交接；等待 IndexedDB 保存并核对记录内容后才清除原生副本。iOS 共享扩展不强制拉起主 App。原生 App 不包含 Node 服务或模型 Key，工作区仍独立部署。
 
 托管模式由 CHATGRAPH_PUBLIC_ORIGIN 启用，需要 HTTPS 根域名和至少 16 字符的 CHATGRAPH_AUTH_PASSWORD。单一拥有者的会话 Cookie 保护工作区，分享令牌只开放对应快照。托管不等于多租户服务，不支持多个 Node 进程写同一目录。MCP OAuth 与此登录独立。

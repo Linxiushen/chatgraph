@@ -27,8 +27,8 @@ public final class MainActivity extends Activity {
     private ShareStore store;
     private WebView web;
     private ValueCallback<Uri[]> chooser;
-    private String workspace = "", banner = "", handoffId = "", handoffNonce = "";
-    private boolean receiving = false, handoffRunning = false;
+    private String workspace = "", webWorkspace = "", banner = "", handoffId = "", handoffNonce = "";
+    private boolean receiving = false, handoffRunning = false, webVisible = false;
     private int receiveCount = 0;
     private String currentReceiveToken = "";
 
@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
     }
     private void showHome() {
         if (isFinishing() || isDestroyed()) return;
-        destroyWeb(); handoffId = ""; handoffNonce = ""; handoffRunning = false;
+        detachWeb(); webVisible = false; handoffId = ""; handoffNonce = ""; handoffRunning = false;
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(PAPER);
         LinearLayout body = column(); applyInsets(body); scroll.addView(body);
         ImageView icon = new ImageView(this); icon.setImageResource(app.chatgraph.mobile.R.drawable.chatgraph_icon);
@@ -76,6 +76,7 @@ public final class MainActivity extends Activity {
             } catch (Exception error) { alert(error.getMessage()); }
         }));
         Button open = button("打开工作区", () -> openWorkspace("")); open.setEnabled(!workspace.isEmpty()); body.addView(open);
+        Button browser = button("在系统浏览器中打开（用于导出）", () -> external(Uri.parse(workspace + "/"))); browser.setEnabled(!workspace.isEmpty()); body.addView(browser);
         body.addView(text("本机待导入", 21));
         List<JSONObject> items = store.list();
         if (items.isEmpty()) body.addView(text("还没有待导入内容。可从其他 App 分享，也可打开工作区粘贴或选择文件。", 14));
@@ -91,7 +92,7 @@ public final class MainActivity extends Activity {
         }
         body.addView(text("内容会保留到导入成功或手动删除。传入工作区后，网页收件箱按其 24 小时规则清理。ChatGraph 无法读取其他 App 的历史聊天。", 13));
         Button clear = button("清除全部本机待导入内容", () -> confirm("清空本机收件箱", "此操作会删除尚未导入的内容。", () -> { store.clear(); banner = "本机收件箱已清空。"; showHome(); })); clear.setEnabled(!receiving && !items.isEmpty()); body.addView(clear);
-        body.addView(button("忘记工作区并退出登录", () -> confirm("忘记工作区", "清除地址、网页登录和网页存储。本机待导入内容仍保留。", () -> { workspace = ""; getPreferences(MODE_PRIVATE).edit().remove("workspace").apply(); clearWebStorage(); banner = "工作区设置已清除。"; showHome(); })));
+        body.addView(button("忘记工作区并退出登录", () -> confirm("忘记工作区", "清除地址、网页登录和网页存储。本机待导入内容仍保留。", () -> { clearWebStorage(); destroyWeb(); workspace = ""; getPreferences(MODE_PRIVATE).edit().remove("workspace").apply(); banner = "工作区设置已清除。"; showHome(); })));
         body.addView(text("Android 测试版 0.4.1-beta.1 · 不包含云服务或 API 密钥", 12));
         setContentView(scroll);
     }
@@ -103,7 +104,7 @@ public final class MainActivity extends Activity {
         return new URI("https", null, host.toLowerCase(Locale.ROOT), uri.getPort() == 443 ? -1 : uri.getPort(), null, null, null).toASCIIString();
     }
     private void saveWorkspace(String next) {
-        if (!workspace.equals(next)) clearWebStorage();
+        if (!workspace.equals(next)) { clearWebStorage(); destroyWeb(); }
         workspace = next; getPreferences(MODE_PRIVATE).edit().putString("workspace", workspace).apply(); banner = "工作区地址已保存。"; showHome();
     }
     private void clearWebStorage() {
@@ -176,13 +177,22 @@ public final class MainActivity extends Activity {
     private boolean isInbox(String value) { return internal(value) && "/mobile-inbox.html".equals(Uri.parse(value).getPath()); }
     private void openWorkspace(String importId) {
         if (workspace.isEmpty()) { alert("请先保存 HTTPS 工作区地址。"); return; }
-        destroyWeb(); handoffId = importId; handoffNonce = ""; handoffRunning = false;
+        boolean reuse = web != null && workspace.equals(webWorkspace);
+        if (reuse) detachWeb(); else destroyWeb();
+        webVisible = true; handoffId = importId; handoffNonce = ""; handoffRunning = false;
         LinearLayout body = column(); body.setBackgroundColor(PAPER); applyInsets(body);
         LinearLayout bar = new LinearLayout(this);
         bar.addView(button("‹ 本机收件箱", this::showHome), new LinearLayout.LayoutParams(0, dp(50), 1));
         bar.addView(button("重新载入", () -> { if (web != null) web.reload(); }), new LinearLayout.LayoutParams(0, dp(50), 1));
         body.addView(bar); body.addView(text(importId.isEmpty() ? "ChatGraph 工作区" : "正在导入；成功存入网页收件箱后才会删除本机副本。", 12));
-        web = new WebView(this); body.addView(web, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(body);
+        if (!reuse) { web = new WebView(this); webWorkspace = workspace; }
+        body.addView(web, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(body);
+        if (reuse) {
+            // Reattach the existing browsing context: sessionStorage owns resumable
+            // imports and must survive a visit to the native inbox.
+            if (!importId.isEmpty()) web.loadUrl(workspace + "/mobile-inbox.html?native-open=" + UUID.randomUUID());
+            return;
+        }
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setGeolocationEnabled(false); settings.setMediaPlaybackRequiresUserGesture(true); settings.setSafeBrowsingEnabled(true);
@@ -237,7 +247,7 @@ public final class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 JSONObject payload = store.read(itemId);
-                String source = "(()=>{const key=" + JSONObject.quote(nonce) + ";const receipt=" + JSONObject.quote("chatgraph:native-android:" + itemId) + ";window.__chatgraphNativeAck={key,state:'pending'};(async()=>{try{const m=await import('/mobile.js');let r=null;const old=localStorage.getItem(receipt);if(old)r=await m.readMobileShare(old);if(!r){r=await m.saveMobileShare(" + payload.toString() + ");localStorage.setItem(receipt,r.id);}window.__chatgraphNativeAck={key,state:'saved',id:r.id};}catch(e){window.__chatgraphNativeAck={key,state:'error',message:e.message||'无法保存到网页收件箱'};}})();return 'started';})()";
+                String source = "(()=>{const key=" + JSONObject.quote(nonce) + ";const receipt=" + JSONObject.quote("chatgraph:native-android:" + itemId) + ";const payload=" + payload.toString() + ";window.__chatgraphNativeAck={key,state:'pending'};(async()=>{try{const m=await import('/mobile.js');const expected=m.normalizeMobileShare(payload);const same=r=>r&&['title','text','url','fileName'].every(f=>r[f]===expected[f]);let r=null;const old=localStorage.getItem(receipt);if(old)r=await m.readMobileShare(old);if(!same(r)){r=await m.saveMobileShare(payload);localStorage.setItem(receipt,r.id);}const stored=await m.readMobileShare(r.id);if(!same(stored))throw Error('网页内容已发生变化，请重新导入');window.__chatgraphNativeAck={key,state:'saved',id:r.id};}catch(e){window.__chatgraphNativeAck={key,state:'error',message:e.message||'无法保存到网页收件箱'};}})();return 'started';})()";
                 main.post(() -> {
                     if (!liveTransfer(nonce)) return;
                     web.evaluateJavascript(source, ignored -> poll(nonce, itemId, 0));
@@ -245,7 +255,7 @@ public final class MainActivity extends Activity {
             } catch (Exception error) { main.post(() -> failTransfer(nonce, "读取本机内容失败，副本仍保留，请重试。")); }
         });
     }
-    private boolean liveTransfer(String nonce) { return web != null && !isDestroyed() && handoffRunning && nonce.equals(handoffNonce) && isInbox(web.getUrl()); }
+    private boolean liveTransfer(String nonce) { return web != null && webVisible && !isDestroyed() && handoffRunning && nonce.equals(handoffNonce) && isInbox(web.getUrl()); }
     private void poll(String nonce, String itemId, int attempts) {
         if (!liveTransfer(nonce)) return;
         if (attempts >= 120) { failTransfer(nonce, "网页保存等待超时。本机副本仍保留，稍后重新导入即可。"); return; }
@@ -284,11 +294,16 @@ public final class MainActivity extends Activity {
     }
     private void alert(String message) { if (!isFinishing() && !isDestroyed()) new AlertDialog.Builder(this).setTitle("ChatGraph").setMessage(message).setPositiveButton("知道了", null).show(); }
     private void confirm(String title, String message, Runnable action) { new AlertDialog.Builder(this).setTitle(title).setMessage(message).setNegativeButton("取消", null).setPositiveButton("继续", (dialog, which) -> action.run()).show(); }
-    private void destroyWeb() {
+    private void detachWeb() {
         if (chooser != null) { chooser.onReceiveValue(null); chooser = null; }
-        if (web != null) { web.stopLoading(); web.setWebChromeClient(null); web.setWebViewClient(new WebViewClient()); web.destroy(); web = null; }
+        if (web != null && web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web);
     }
-    @Override public void onBackPressed() { if (web != null && web.canGoBack()) web.goBack(); else if (web != null) showHome(); else super.onBackPressed(); }
+    private void destroyWeb() {
+        detachWeb(); webVisible = false;
+        if (web != null) { web.stopLoading(); web.setWebChromeClient(null); web.setWebViewClient(new WebViewClient()); web.destroy(); web = null; }
+        webWorkspace = "";
+    }
+    @Override public void onBackPressed() { if (webVisible && web != null && web.canGoBack()) web.goBack(); else if (webVisible && web != null) showHome(); else super.onBackPressed(); }
     @Override protected void onSaveInstanceState(Bundle outState) { outState.putBoolean("share_consumed", !receiving); super.onSaveInstanceState(outState); }
     @Override protected void onDestroy() { handoffNonce = ""; destroyWeb(); worker.shutdown(); super.onDestroy(); }
 }

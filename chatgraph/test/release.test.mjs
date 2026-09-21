@@ -45,6 +45,12 @@ test('release allowlist excludes private data and produces reproducible archives
     'chatgraph/lib/example.mjs': 'export const value = 1;',
     'chatgraph/integrations/chatgpt/node_modules/private.json': 'private-placeholder',
     'chatgraph/test-output/private.json': 'private-placeholder',
+    'chatgraph/mobile/android/local.properties': 'private-placeholder',
+    'chatgraph/mobile/android/signing.properties': 'private-placeholder',
+    'chatgraph/mobile/android/app/build/intermediates/private.json': 'private-placeholder',
+    'chatgraph/mobile/ios/ExportOptions.local.plist': 'private-placeholder',
+    'chatgraph/mobile/ios/Configuration.xcconfig': 'APP_BUNDLE_IDENTIFIER = com.example.public',
+    'chatgraph/mobile/ios/ChatGraph.xcodeproj/project.pbxproj': '// public project',
     'archify/assets/template.html': '<html>template</html>',
     'archify/renderers/shared/utils.mjs': '// utilities',
     'archify/renderers/shared/i18n.mjs': '// translations',
@@ -60,6 +66,8 @@ test('release allowlist excludes private data and produces reproducible archives
   assert.ok(entries.has('chatgraph-0.2.0/SHA256SUMS'));
   assert.ok(entries.has('chatgraph-0.2.0/.dockerignore'));
   assert.ok(entries.has('chatgraph-0.2.0/chatgraph/.gitignore'));
+  assert.ok(entries.has('chatgraph-0.2.0/chatgraph/mobile/ios/Configuration.xcconfig'));
+  assert.ok(entries.has('chatgraph-0.2.0/chatgraph/mobile/ios/ChatGraph.xcodeproj/project.pbxproj'));
   const upstreamReadme = entries.get('chatgraph-0.2.0/ARCHIFY_README.md').toString('utf8');
   assert.match(upstreamReadme, /https:\/\/raw\.githubusercontent\.com\/tt-a1i\/archify\/72c750bb070d95171dbb2244e5b62b1b7da69c12\/docs\/assets\/preview\.png/);
   assert.match(upstreamReadme, /github\.com\/tt-a1i\/archify\/blob\/72c750bb070d95171dbb2244e5b62b1b7da69c12\/CHANGELOG\.md#unreleased/);

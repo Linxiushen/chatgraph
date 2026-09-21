@@ -1,4 +1,5 @@
 build/
+build-simulator/
 *.xcuserstate
 xcuserdata/
 *.ipa

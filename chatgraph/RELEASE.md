@@ -20,7 +20,21 @@ node chatgraph/server.mjs
 
 包含 ChatGraph 服务端、网页与 PWA 资源、手机收件箱、iPhone Safari 快捷指令脚本、浏览器扩展、ChatGPT 集成源码、部署模板、测试和说明文档，以及运行 HTML 导出需要的 Archify 模板、国际化工具与许可文件。Archify 模板已经内嵌阅读器和字体，包中保留对应字体许可。
 
-手机安装需要可访问的 HTTPS 工作区。PWA 从 `/mobile-inbox.html` 添加到主屏幕；iPhone 快捷指令按 `chatgraph/mobile/README.md` 设置。发布包不包含已签名的 IPA/APK，也不代表应用商店或真实设备兼容性审核通过。
+手机安装需要可访问的 HTTPS 工作区。PWA 从 `/mobile-inbox.html` 添加到主屏幕；iPhone 快捷指令按 `chatgraph/mobile/README.md` 设置。原生版本另外提供 Android 和 iOS 两个 ZIP，Android 内含 debug 测试签名 APK，iOS 内含未签名 IPA 与 Xcode 工程；它们不代表应用商店或真实设备验收通过。
+
+## Android / iOS 独立包
+
+Android 工程位于 `chatgraph/mobile/android`，iOS 工程位于 `chatgraph/mobile/ios`。原生 CI 编译 APK、检查 Android lint、验证 APK 签名，并在 macOS Xcode 上编译主 App 和分享扩展，将无分发签名的 App 放入 IPA。不能把未签名 IPA 当作可直接安装到普通 iPhone 的包。
+
+下载对应 CI 产物后执行：
+
+```sh
+node chatgraph/scripts/package-native.mjs \
+  --android-apk /实际路径/app-debug.apk \
+  --ios-ipa /实际路径/ChatGraph-iOS-unsigned.ipa
+```
+
+脚本生成 `ChatGraph-Android-<版本>.zip` 和 `ChatGraph-iOS-<版本>.zip`，各自包含真实编译产物、完整原生源码、中文使用说明、许可证和文件校验值。不会包含本机 SDK、Gradle 缓存、构建中间文件、签名私钥、个人导出配置或服务器密钥。源码包内的脚本可用 `bash` 执行，无需依赖 ZIP 保留可执行标记。
 
 发布脚本只读取明确列出的文件和源代码目录。它排除 `.env`、`.data`、`.git`、`node_modules`、历史快照、分享数据、任务数据、测试输出和构建目录。`.env.example` 是唯一允许打包的环境变量示例。符号链接会使打包失败。
 

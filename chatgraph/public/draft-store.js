@@ -41,9 +41,28 @@ async function transaction(mode, operation) {
   });
 }
 
+const mobileImport = draft => /^[a-f0-9-]{36}$/.test(draft?.mobileShareId || '');
+function recoverableImports(records) {
+  const grouped = new Map();
+  for (const record of records) {
+    if (record.kind !== 'pending-import' || !record.operationId || !record.input || (!draftStore.owns(record) && !mobileImport(record))) continue;
+    const copies = grouped.get(record.operationId) || [];
+    copies.push(record); grouped.set(record.operationId, copies);
+  }
+  return [...grouped.values()].map(copies => {
+    copies.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    // An older window can retain a pre-submit draft after another session has
+    // already admitted the paid job. Keep that job's input and receipt together.
+    return copies[0].jobId ? copies[0] : copies.find(record => record.jobId) || copies[0];
+  }).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
 export const draftStore = {
   all: () => transaction('readonly', store => store.getAll()),
   owns: draft => !draft.owner || draft.owner === owner,
+  // Mobile app processes may lose sessionStorage while IndexedDB survives.
+  // Only mobile import receipts cross owner boundaries; graph edits stay local.
+  recoverableImports,
   // Only graph data is accepted. API settings never enter this store.
   put: draft => transaction('readwrite', store => store.put({ id: `${owner}:${draft.graph.id}`, owner, graph: draft.graph, dirty: draft.dirty, saved: draft.saved, autoSavePaused: draft.autoSavePaused || false, recoveredAt: Date.now() })),
   remove: async graphId => {
@@ -66,5 +85,14 @@ export const draftStore = {
       targetGraphId: operation.targetGraphId || null, resultGraphId: operation.resultGraphId || null, jobId: operation.jobId || null, phase: operation.phase || 'draft', updatedAt: Date.now() };
     return transaction('readwrite', store => store.put(value));
   },
-  removeImport: operationId => transaction('readwrite', store => store.delete(`import:${owner}:${operationId}`)),
+  removeImport: (operationId, mobileShareId) => transaction('readwrite', store => {
+    if (!mobileImport({ mobileShareId })) return store.delete(`import:${owner}:${operationId}`);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      for (const record of request.result) {
+        if (record.kind === 'pending-import' && record.operationId === operationId && record.mobileShareId === mobileShareId) store.delete(record.id);
+      }
+    };
+    return request;
+  }),
 };

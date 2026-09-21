@@ -15,8 +15,8 @@ for (let index = 2; index < process.argv.length; index += 2) {
 }
 if (!options.has('--android-apk') || !options.has('--ios-ipa')) throw new Error('必须提供已构建的 Android APK 和未签名 iOS IPA，不能把只有源码的 ZIP 当成 App 安装包。');
 const output = options.get('--output') || path.join(project, 'test-output', 'releases');
-const forbidden = new Set(['build', '.gradle', '.git', '.DS_Store', 'local.properties', 'xcuserdata', 'native-artifacts', 'node_modules', 'test-output', 'dist']);
-const extensions = new Set(['.md', '.txt', '.png', '.java', '.gradle', '.properties', '.xml', '.bat', '.sh', '.swift', '.plist', '.pbxproj', '.xcscheme', '.xcworkspacedata', '.entitlements', '.xcprivacy', '.json']);
+const forbidden = new Set(['build', 'build-simulator', '.gradle', '.git', '.DS_Store', 'local.properties', 'signing.properties', 'keystore.properties', 'ExportOptions.local.plist', 'Configuration.local.xcconfig', 'xcuserdata', 'native-artifacts', 'node_modules', 'test-output', 'dist']);
+const extensions = new Set(['.md', '.txt', '.png', '.java', '.gradle', '.properties', '.xml', '.bat', '.sh', '.swift', '.plist', '.pbxproj', '.xcscheme', '.xcworkspacedata', '.xcconfig', '.entitlements', '.xcprivacy', '.json', '.py']);
 const special = new Set(['.gitignore', 'gradlew', 'gradle-wrapper.jar', 'GRADLE-LICENSE', 'LICENSE']);
 
 async function filesFor(platform) {
@@ -37,6 +37,10 @@ async function filesFor(platform) {
     }
   }
   await walk();
+  const required = platform === 'android'
+    ? ['source/app/src/main/AndroidManifest.xml', 'source/app/src/main/java/app/chatgraph/mobile/MainActivity.java', 'source/gradle/wrapper/gradle-wrapper.jar', 'source/gradlew', 'source/settings.gradle', 'source/README.md']
+    : ['source/ChatGraph.xcodeproj/project.pbxproj', 'source/Configuration.xcconfig', 'source/ChatGraph/ChatGraphApp.swift', 'source/ChatGraphShare/ShareViewController.swift', 'source/Shared/AppGroups.entitlements', 'source/README.md'];
+  for (const name of required) if (!entries.some(([entry]) => entry === name)) throw new Error('原生源码包缺少必要文件：' + name);
   return entries;
 }
 async function readBinary(filename, kind) {
