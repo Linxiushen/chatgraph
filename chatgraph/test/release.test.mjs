@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 import { buildRelease } from '../scripts/package-release.mjs';
 
 function archiveFiles(buffer) {
@@ -80,6 +81,14 @@ test('release allowlist excludes private data and produces reproducible archives
   assert.ok(extension.has('LICENSE'));
   assert.ok([...entries.values()].every(content => !content.includes('private-placeholder')));
   assert.ok([...entries.keys()].every(name => !name.includes('node_modules') && !name.includes('/.data/') && !name.includes('/test-output/')));
+
+  execFileSync('git', ['init', '--quiet', directory]);
+  execFileSync('git', ['-C', directory, 'add', '.']);
+  await fs.writeFile(path.join(directory, 'chatgraph/lib/untracked.json'), 'untracked-private-placeholder');
+  const trackedRelease = await buildRelease({ repositoryDir: directory, outputDir: path.join(directory, 'tracked-output') });
+  const trackedEntries = archiveFiles(await fs.readFile(trackedRelease.file));
+  assert.ok(!trackedEntries.has('chatgraph-0.2.0/chatgraph/lib/untracked.json'));
+  assert.ok([...trackedEntries.values()].every(content => !content.includes('untracked-private-placeholder')));
 });
 
 test('release rejects symlink metadata before reading it and symlink source files before packing', async t => {

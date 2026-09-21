@@ -25,7 +25,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile test APK and run Android lint
         working-directory: chatgraph/mobile/android
-        run: bash ./gradlew --no-daemon :app:assembleDebug :app:lintDebug
+        run: bash ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
       - name: Verify APK signature and package
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose chatgraph/mobile/android/app/build/outputs/apk/debug/app-debug.apk

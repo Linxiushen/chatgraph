@@ -37,3 +37,44 @@ docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compo
 ChatGPT 组件/MCP 服务是可选的独立服务，见 `../integrations/README.md`。公开启用付费 AI 功能需要配置 OAuth 身份验证、资源权限和可达 HTTPS 服务。主工作区的密码登录不等于 MCP OAuth。
 
 本仓库提供部署配置，不包含服务器、域名、已申请的开发者账号或应用商店审核结果。Docker 本地验证不代表外网 HTTPS 部署已经完成。
+
+## 健康、容量与运行边界
+
+容器使用非 root 用户、只读根文件系统、无额外 Linux capability、1 GiB 内存、2 CPU 与 128 进程上限；只有数据卷和临时目录可写。Docker 每 30 秒调用不含私人数据的健康端点，Caddy 等待应用健康后启动。日志轮转最多 3 份、每份 10 MB。部署者应监测容器状态、数据卷剩余空间、备份年龄和 TLS 续期。健康端点只证明 HTTP 服务活着，不代表模型余额、磁盘写权限、备份或外网 TLS 正常；Docker 将 unhealthy 标出来但不会仅凭 unhealthy 自动重启。
+
+当前是单拥有者、单进程文件存储。**不得配置 replicas > 1，也不得在宿主机另开 Node 进程写同一卷。** 多租户、分布式队列和水平扩容需要另一套数据/权限设计。手机和多个浏览器可访问同一个进程，版本冲突保护继续生效。
+
+## 可执行的全量备份与恢复
+
+网页 JSON 备份适合图谱迁移；`data-snapshot.mjs` 保留整个数据目录，包括历史、付费任务回执、分享和损坏原件。快照是一个含 `manifest.json` 与 `data/` 的私密目录，逐文件 SHA-256 校验，文件权限 0600、目录 0700；它没有自带加密，应放在受控/加密备份存储，不加入源码或公开发行包。
+
+先停止**所有**使用该数据目录的服务。`--stopped` 是操作员确认，不会替你停机，也不是在线一致性快照。以下命令不覆盖已有目录：
+
+```sh
+node chatgraph/scripts/data-snapshot.mjs backup --data-dir /private/chatgraph-data --output /private/backups/before-upgrade --stopped
+node chatgraph/scripts/data-snapshot.mjs verify --snapshot /private/backups/before-upgrade
+node chatgraph/scripts/data-snapshot.mjs restore --snapshot /private/backups/before-upgrade --data-dir /private/chatgraph-restored --stopped
+```
+
+恢复前先验证全部文件；任何文件缺失、额外文件、校验不符、符号链接或路径逃逸都中止操作。复制中断时保留 `.incomplete`，不能当作成功快照或启用的数据目录。即使原图谱已损坏，也保留其字节用于人工恢复。快照不会包含数据目录外的 `.env`，部署环境和正式签名密钥必须另外安全备份。
+
+Docker 部署可以按同样步骤操作。先准备仅管理员和容器 UID 1000 可写的宿主机目录 `/secure/chatgraph-backups`，然后在仓库根目录执行：
+
+```sh
+docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compose.yaml stop app
+docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compose.yaml run --rm --no-deps -v /secure/chatgraph-backups:/backups app node chatgraph/scripts/data-snapshot.mjs backup --data-dir /data --output /backups/before-upgrade --stopped
+docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compose.yaml run --rm --no-deps -v /secure/chatgraph-backups:/backups:ro app node chatgraph/scripts/data-snapshot.mjs verify --snapshot /backups/before-upgrade
+docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compose.yaml up -d --build
+```
+
+需要回滚数据时先停 `app`，将快照恢复到卷中的一个新子目录，例如 `--data-dir /data/restored-20260921`。在私密环境文件设置 `CHATGRAPH_DATA_DIR=/data/restored-20260921` 后重新创建应用，旧数据保留不动。此后备份命令的 `--data-dir` 也必须使用该配置值。不要覆盖现存目录来“强制恢复”。只回滚程序时使用上一版源码和既有数据；涉及未来 schema 变更时须按版本迁移文档操作，不能假设旧版一定能读新版数据。
+
+至少每天和升级前执行备份，保留一份不同机器/存储账户上的副本；先验证新备份成功再执行保留周期清理。每月在新目录演练恢复并检查历史与任务回执。这里提供命令与演练测试，没有擅自为你的机器配置定时任务或删除旧备份。
+
+## 部署回归
+
+```sh
+node chatgraph/scripts/deploy-check.mjs
+```
+
+需要可用 Docker。脚本建立独立测试镜像、卷和临时密码，验证非 root/只读运行、健康、登录、保存、容器重启后的图谱和任务回执、导出及停机备份恢复，最后清理自己的资源。没有真实模型调用，不访问用户已有知识库。CI 同样执行这项检查；真实公网 HTTPS、域名续期、设备访问和实际磁盘容量仍应在上线环境验收。

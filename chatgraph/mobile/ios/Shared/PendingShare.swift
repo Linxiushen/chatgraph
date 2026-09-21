@@ -15,6 +15,7 @@ struct PendingShare: Codable, Identifiable {
 
     func validated() throws -> PendingShare {
         guard UUID(uuidString: id) != nil else { throw ShareFailure("收件标识无效。") }
+        guard createdAt.isFinite, createdAt > 0 else { throw ShareFailure("收件时间无效。") }
         guard title.utf8.count <= 4096, url.utf8.count <= 8192, fileName.utf8.count <= 1024,
               text.utf8.count <= (fileName.isEmpty ? 2 : 25) * 1024 * 1024 else {
             throw ShareFailure("文字最多 2 MB，对话文件最多 25 MB。")
@@ -84,8 +85,8 @@ enum ShareStore {
         return directory
     }
 
-    private static func locked<T>(_ operation: (URL) throws -> T) throws -> T {
-        let directory = try directory()
+    private static func locked<T>(in directory: URL, _ operation: (URL) throws -> T) throws -> T {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let descriptor = open(directory.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw ShareFailure("无法打开本机收件箱。") }
         defer { close(descriptor) }
@@ -99,21 +100,39 @@ enum ShareStore {
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }
             .compactMap { file -> PendingShare? in
-                guard let data = try? Data(contentsOf: file), let item = try? JSONDecoder().decode(PendingShare.self, from: data),
-                      (try? item.validated()) != nil, item.createdAt >= now - ttl, item.createdAt <= now else {
+                let item: PendingShare
+                do {
+                    let attributes = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                    guard attributes.isRegularFile == true, (attributes.fileSize ?? Int.max) <= 50 * 1024 * 1024 + 32768 else {
+                        throw ShareFailure("收件文件格式无效。")
+                    }
+                    let data = try Data(contentsOf: file, options: .mappedIfSafe)
+                    item = try JSONDecoder().decode(PendingShare.self, from: data).validated()
+                } catch {
+                    // A protection/read error or interrupted/corrupt receipt is
+                    // not evidence that the user asked to discard the original.
+                    throw ShareFailure("部分收件内容暂时无法读取，原件已保留。请稍后重试。")
+                }
+                if item.createdAt < now - ttl {
                     try FileManager.default.removeItem(at: file)
                     return nil
                 }
+                // Keep future timestamps: correcting the device clock must not
+                // erase a share that was valid when it was saved.
                 return item
             }.sorted { $0.createdAt > $1.createdAt }
     }
 
-    static func list() throws -> [PendingShare] { try locked { try records(in: $0) } }
+    static func list() throws -> [PendingShare] { try list(in: directory()) }
+    static func list(in directory: URL) throws -> [PendingShare] { try locked(in: directory) { try records(in: $0) } }
 
-    static func save(_ value: PendingShare) throws {
-        let item = try value.validated()
-        try locked { directory in
-            let others = try records(in: directory).filter { $0.id != item.id }
+    static func save(_ value: PendingShare) throws { try save(value, in: directory()) }
+    static func save(_ value: PendingShare, in directory: URL) throws {
+        var item = try value.validated()
+        try locked(in: directory) { directory in
+            let current = try records(in: directory)
+            item.createdAt = current.first(where: { $0.id == item.id })?.createdAt ?? Date().timeIntervalSince1970 * 1000
+            let others = current.filter { $0.id != item.id }
             guard others.count < 5, others.reduce(item.bytes, { $0 + $1.bytes }) <= 50 * 1024 * 1024 else {
                 throw ShareFailure("本机收件箱已满（最多 5 条、合计 50 MB）。请打开 ChatGraph 整理或删除。")
             }
@@ -123,10 +142,23 @@ enum ShareStore {
     }
 
     static func remove(_ id: String) throws {
+        try remove(id, in: directory())
+    }
+    static func remove(_ id: String, in directory: URL) throws {
         guard UUID(uuidString: id) != nil else { throw ShareFailure("收件标识无效。") }
-        try locked { directory in
+        try locked(in: directory) { directory in
             let file = directory.appendingPathComponent("\(id).json")
             if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        }
+    }
+
+    static func clear() throws { try clear(in: directory()) }
+    static func clear(in directory: URL) throws {
+        try locked(in: directory) { directory in
+            for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+                where file.pathExtension == "json" {
+                try FileManager.default.removeItem(at: file)
+            }
         }
     }
 }

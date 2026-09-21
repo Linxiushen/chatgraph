@@ -43,9 +43,10 @@ const STATUSES = { confirmed: '已确认', proposed: '提议中', rejected: '已
 const RELATIONS = { contains: '包含', supports: '支持', challenges: '反驳', revises: '修正', depends: '依赖' };
 const TYPE_ICONS = { topic: 'nodes', claim: 'flag', evidence: 'link', question: 'question', action: 'check' };
 const ROLE_NAMES = { user: '我', assistant: 'AI 助手', unknown: '未标注说话者' };
-const state = { pendingImports: [], foreignDrafts: [], forceTreeLayout: false, autoSavePaused: false, redoHistory: [], multiSelected: new Set(), libraryQuery: '', conflictIds: new Set(), draftStorageFailed: false, graph: null, library: [], drafts: new Map(), view: innerWidth <= 700 ? 'outline' : 'graph', selected: null, dirty: false, saved: false, history: [], camera: { x: 0, y: 0, scale: 1 }, collapsed: new Set(), query: '', filterType: 'all', filterStatus: 'all', inspectorOpen: innerWidth > 880, api: { baseUrl: '', model: '', apiKey: '' }, config: {}, saving: false, importing: false, demo: null };
+const state = { pendingImports: [], foreignImports: [], foreignDrafts: [], forceTreeLayout: false, autoSavePaused: false, redoHistory: [], multiSelected: new Set(), libraryQuery: '', conflictIds: new Set(), draftStorageFailed: false, graph: null, library: [], drafts: new Map(), view: innerWidth <= 700 ? 'outline' : 'graph', selected: null, dirty: false, saved: false, history: [], camera: { x: 0, y: 0, scale: 1 }, collapsed: new Set(), query: '', filterType: 'all', filterStatus: 'all', inspectorOpen: innerWidth > 880, api: { baseUrl: '', model: '', apiKey: '' }, config: {}, saving: false, importing: false, demo: null };
 let toastTimer, drag, modalRestoreFocus, modalCleanup, autosaveTimer, liveEditKey;
 const saveInFlight = new Map();
+const deletingGraphs = new Set();
 
 function el(tag, props = {}, children = []) {
   const result = document.createElement(tag);
@@ -73,9 +74,31 @@ function button(label, action, className = 'secondary', iconName) { return el('b
 function toast(message, error = false) { clearTimeout(toastTimer); const node = $('#toast'); node.textContent = message; node.classList.toggle('error', error); node.hidden = false; toastTimer = setTimeout(() => { node.hidden = true; }, error ? 7500 : 3600); }
 async function request(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
-  if (response.status === 401) { location.assign('/login'); throw new Error('请先登录工作空间。'); }
+  if (response.status === 401) { showSessionExpired(); const error = new Error('登录已过期。请重新登录，再回到此页面重试；当前输入继续保留。'); error.status = 401; throw error; }
+  if (response.ok) $('#session-expired')?.remove();
   if (!response.ok) { let data; try { data = await response.json(); } catch { data = {}; } const error = new Error(data.error || `请求失败（${response.status}），请确认本地服务仍在运行。`); error.status = response.status; throw error; }
   return response.json();
+}
+function showSessionExpired() {
+  if ($('#session-expired')) return;
+  const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: '工作区密码', 'aria-label': '重新登录工作区密码' });
+  const submit = el('button', { type: 'submit', text: '重新登录' });
+  const status = el('span', { role: 'status' });
+  const banner = el('form', { id: 'session-expired', class: 'session-expired', 'aria-label': '登录过期后继续工作' }, [
+    el('span', { text: '登录已过期，输入已保留。重新登录后可继续。' }), password, submit, status,
+  ]);
+  banner.addEventListener('submit', async event => {
+    event.preventDefault(); submit.disabled = true; status.textContent = '';
+    try {
+      const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: password.value }) });
+      password.value = '';
+      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || '暂时无法重新登录，请重试。'); }
+      banner.remove(); scheduleSave(); toast('已重新登录，未完成的整理可继续。');
+    } catch (error) { status.textContent = error.message; }
+    finally { submit.disabled = false; }
+  });
+  // Keep reauthentication reachable inside an active dialog's focus trap.
+  ($('#modal-root .modal') || document.body).append(banner);
 }
 function graphMode(graph) { return graph?.sessions?.length > 1 ? `${graph.sessions.length} 次对话 · 持续积累` : graph?.mode === 'ai' ? 'AI 结构化' : graph?.mode === 'outline' ? '原文整理 · 非 AI 分析' : '示例图谱'; }
 function modeExplanation(graph) {
@@ -537,7 +560,7 @@ function renderHeader() {
 }
 function renderLibrary() {
   renderPendingImports();
-  const recover = $('#recover-drafts'); recover.hidden = !state.foreignDrafts.length; recover.textContent = `找回其他窗口草稿（${state.foreignDrafts.length}）`;
+  const recover = $('#recover-drafts'), foreignCount = state.foreignDrafts.length + state.foreignImports.length; recover.hidden = !foreignCount; recover.textContent = `找回其他窗口的内容（${foreignCount}）`;
   const items = new Map(state.library.map(graph => [graph.id, { ...graph, saved: true }]));
   for (const [id, draft] of state.drafts) { if (draft.graph.mode === 'demo' && !draft.saved && !draft.dirty) continue; items.set(id, { ...draft.graph, saved: draft.saved, dirty: draft.dirty, nodeCount: draft.graph.nodes.length }); }
   if (state.graph && (state.graph.mode !== 'demo' || state.saved || state.dirty)) items.set(state.graph.id, { ...state.graph, saved: state.saved, dirty: state.dirty, nodeCount: state.graph.nodes.length });
@@ -587,12 +610,35 @@ async function openDamagedGraph(summary) {
   } catch (error) { formError(dialog.body, error.message); }
 }
 async function openForeignDrafts() {
-  const dialog = modal('找回其他窗口的草稿', '每个窗口单独保存草稿。恢复会创建副本，其他窗口的草稿和知识库版本都会保留。');
+  const dialog = modal('找回其他窗口的内容', '图谱编辑恢复为副本；未完成的整理可接着处理原任务，不会自动新建模型任务。');
   dialog.body.append(el('p', { class: 'notice', text: '这里也可能包含仍在其他窗口编辑的内容。请根据保存时间选择需要找回的一份。' }));
   dialog.footer.append(button('关闭', closeModal, 'secondary'));
   try {
-    state.foreignDrafts = (await draftStore.all()).filter(draft => draft.dirty && draft.graph?.id && !draftStore.owns(draft));
+    const records = await draftStore.all();
+    state.foreignDrafts = records.filter(draft => draft.dirty && draft.graph?.id && !draftStore.owns(draft));
+    state.foreignImports = foreignImportReceipts(records);
     renderLibrary();
+    for (const operation of state.foreignImports) {
+      const resume = button('接着整理', async () => {
+        resume.disabled = true;
+        try {
+          // Re-read immediately before adoption: a still-open window may have
+          // admitted a paid job since this list was first displayed.
+          const latestRecords = await draftStore.all();
+          const latest = draftStore.recoverableImports(latestRecords, { includeForeign: true }).find(item => item.operationId === operation.operationId);
+          if (!latest) throw new Error('这次整理已经完成或移除，请重新打开列表。');
+          const sources = latestRecords.filter(item => item.kind === 'pending-import' && item.operationId === latest.operationId);
+          const recoveredFrom = [...(latest.recoveredFrom || []), ...sources.filter(item => !draftStore.owns(item)).map(item => ({ id: item.id, updatedAt: item.updatedAt, jobId: item.jobId || null }))];
+          const adopted = { ...latest, recoveredFrom };
+          // Persist the adopted receipt before leaving the recovery list. The
+          // original owner remains recoverable until the graph is safely saved.
+          await retainImport(adopted);
+          state.foreignImports = state.foreignImports.filter(item => item.operationId !== adopted.operationId); renderLibrary();
+          openImport({ resume: adopted, autoResume: true });
+        } catch (error) { formError(dialog.body, error.message); resume.disabled = false; }
+      }, 'secondary compact', 'clock');
+      dialog.body.append(el('article', { class: 'history-entry' }, [el('div', {}, [el('strong', { text: operation.input.title || '未命名的整理' }), el('p', { text: `${new Date(operation.updatedAt).toLocaleString('zh-CN')} · ${operation.jobId ? '原任务与原文已保留' : '尚未提交的原文草稿'}` })]), resume]));
+    }
     for (const draft of [...state.foreignDrafts].sort((a, b) => b.recoveredAt - a.recoveredAt)) {
       const recover = button('打开为副本', async () => {
         recover.disabled = true;
@@ -605,7 +651,7 @@ async function openForeignDrafts() {
       }, 'secondary compact', 'document');
       dialog.body.append(el('article', { class: 'history-entry' }, [el('div', {}, [el('strong', { text: draft.graph.title }), el('p', { text: `${new Date(draft.recoveredAt).toLocaleString('zh-CN')} · ${draft.graph.nodes.length} 个观点` })]), recover]));
     }
-    if (!state.foreignDrafts.length) dialog.body.append(el('p', { class: 'empty-note', text: '其他窗口的草稿已经保存，目前没有需要找回的内容。' }));
+    if (!state.foreignDrafts.length && !state.foreignImports.length) dialog.body.append(el('p', { class: 'empty-note', text: '其他窗口的草稿已经保存，目前没有需要找回的内容。' }));
   } catch (error) { formError(dialog.body, error.message); }
 }
 async function openDemo() { try { const graph = state.demo || await request('/api/demo'); state.demo = graph; const draft = state.drafts.get(graph.id); if (state.graph?.id === graph.id) { toast('你正在查看示例图谱'); $('#sidebar').classList.remove('open'); return; } setGraph(draft?.graph || graph, draft || { selected: graph.nodes.find(node => node.type === 'claim' && node.status === 'confirmed')?.id || null }); } catch (error) { toast(error.message, true); } }
@@ -616,6 +662,7 @@ async function save() {
   return saveGraphId(state.graph.id);
 }
 async function saveGraphId(id, { silent = false } = {}) {
+  if (deletingGraphs.has(id)) return;
   if (saveInFlight.has(id)) return saveInFlight.get(id);
   const draft = state.drafts.get(id); if (!draft) return;
   const payload = clone(draft.graph);
@@ -683,6 +730,7 @@ async function exportGraph(format) {
   if (!state.graph) return;
   try {
     const response = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: state.graph, format }) });
+    if (response.status === 401) showSessionExpired();
     if (!response.ok) { let error; try { error = await response.json(); } catch { error = {}; } throw new Error(error.error || `导出失败（${response.status}）`); }
     const blob = await response.blob(), url = URL.createObjectURL(blob);
     const ext = { markdown: 'md', json: 'json', html: 'html', svg: 'svg', pptx: 'pptx' }[format];
@@ -751,9 +799,12 @@ async function clearImport(operation) {
   // Called only after the graph is durably saved. Clear copies left by earlier
   // mobile processes, without touching other imports or graph-edit namespaces.
   if (operation.mobileShareId) await removeMobileShare(operation.mobileShareId, operation.mobileShareRevision).catch(() => toast('图谱已保存，收件箱原件暂未清除，可回收件箱手动删除。', true));
-  await draftStore.removeImport(operation.operationId, operation.mobileShareId);
+  await draftStore.removeImport(operation.operationId, operation.mobileShareId, operation.recoveredFrom);
   state.pendingImports = state.pendingImports.filter(item => item.operationId !== operation.operationId);
   renderPendingImports();
+}
+function foreignImportReceipts(records) {
+  return draftStore.recoverableImports(records, { includeForeign: true }).filter(operation => !draftStore.owns(operation) && !operation.mobileShareId && !state.pendingImports.some(item => item.operationId === operation.operationId));
 }
 function openPendingImports() {
   if (!state.pendingImports.length) return toast('没有需要继续的整理。');
@@ -784,7 +835,7 @@ function openImport(options = {}) {
   const defaultMode = resumed?.input.mode || (state.config.aiConfigured || state.api.apiKey ? 'ai' : 'outline');
   for (const [value, label, help] of [['outline', '原文整理', '按原文组织，不推断个人立场。'], ['ai', 'AI 深度结构化', '提取判断、变化与依据，使用已配置模型。']]) modes.append(el('label', { class: 'mode-choice' }, [el('input', { type: 'radio', name: 'import-mode', value, checked: value === defaultMode }), el('span', {}, [el('strong', { text: label }), el('small', { text: help })])]));
   const file = el('input', { type: 'file', accept: '.txt,.md,.json,text/plain,text/markdown,application/json', 'aria-label': '选择对话文件或 ChatGPT 账号导出' });
-  const fileInfo = el('small', { text: '账号导出请先解压并选择 conversations.json · 本地文件最多 25 MB，选定内容最多 2 MB' });
+  const fileInfo = el('small', { text: '账号导出请先解压并选择 conversations.json · 本地文件最多 25 MB，选定对话最多 2 MB，图谱最多 8 MB' });
   const previewPanel = el('section', { class: 'import-selection', hidden: true, 'aria-label': '导入内容预览' });
   const prepare = button('检查导入内容', () => prepareImport(text.value), 'secondary compact', 'search');
   file.addEventListener('change', async () => {
@@ -815,13 +866,18 @@ function openImport(options = {}) {
     ...(importCapture ? { capture: importCapture } : {}) });
   const modeLimit = () => $('input[name="import-mode"]:checked', dialog.body).value === 'ai' ? 500 : 199;
   const importBytes = input => new TextEncoder().encode(JSON.stringify(input)).byteLength;
+  function withinImportLimit(input, kind) {
+    if (kind !== 'graph') return importBytes(input) <= 2 * 1024 * 1024;
+    // A saved graph carries authored relationships and sources, not a new AI
+    // transcript. Account for pretty-printing separately from canonical size.
+    return new TextEncoder().encode(JSON.stringify(JSON.parse(input.text.replace(/^\uFEFF/, '')))).byteLength <= 8 * 1024 * 1024 && importBytes(input) <= 32 * 1024 * 1024;
+  }
   function safeToRetain() {
-    if (selecting || importBytes({ text: text.value }) > 2 * 1024 * 1024) return false;
-    if (/^[\s\uFEFF]*[\[{]/.test(text.value)) {
-      try { return inspectConversationFile(text.value).kind !== 'archive'; }
-      catch { return false; } // Incomplete pasted archives also stay out of browser storage.
-    }
-    return true;
+    if (selecting) return false;
+    try {
+      const kind = /^[\s\uFEFF]*[\[{]/.test(text.value) ? inspectConversationFile(text.value).kind : 'conversation';
+      return kind !== 'archive' && withinImportLimit(readInput(), kind);
+    } catch { return false; } // Incomplete pasted archives also stay out of browser storage.
   }
   function resetSelection() {
     localSource = localCatalog = localPreview = null; roleOverrides = {}; conversationIndex = undefined; catalogQuery = ''; selecting = false;
@@ -903,9 +959,10 @@ function openImport(options = {}) {
       const nextTitle = !title.value.trim() || title.value === autoFilledTitle ? preview.title.slice(0, 200) || title.value.trim() : title.value.trim();
       const nextUrl = sourceUrlEdited ? url.value.trim() : preview.url || '';
       const payload = { ...readInput(), text: preview.text, title: nextTitle, platform: preview.platform || platform.value, url: nextUrl };
-      if (importBytes(payload) > 2 * 1024 * 1024) return formError(previewPanel, '选定内容超过 2 MB，请缩小消息范围。');
+      if (!withinImportLimit(payload, preview.kind)) return formError(previewPanel, preview.kind === 'graph' ? '图谱内容超过 8 MB，请按主题拆分后导入。' : '选定内容超过 2 MB，请缩小消息范围。');
       if (preview.kind === 'conversation' && preview.selectedCount > modeLimit()) return formError(previewPanel, `当前模式每次最多整理 ${modeLimit()} 条消息，请缩小范围或切换整理模式。`);
       text.value = preview.text;
+      if (preview.kind === 'graph') $('input[name="import-mode"][value="outline"]', dialog.body).checked = true;
       if (!title.value.trim() || title.value === autoFilledTitle) autoFilledTitle = nextTitle;
       title.value = nextTitle;
       if (preview.platform) platform.value = [...platform.options].some(option => option.value === preview.platform) ? preview.platform : '其他';
@@ -941,12 +998,15 @@ function openImport(options = {}) {
   const cancel = button('取消', async () => {
     if (!state.importing) return closeModal();
     cancelled = true; cancel.disabled = true;
-    let completed = false;
+    let phase = activeJob ? 'unknown' : 'cancelled';
     try {
-      if (activeJob) completed = (await request(`/api/jobs/${encodeURIComponent(activeJob)}`, { method: 'DELETE' })).status === 'completed';
+      if (activeJob) {
+        const job = await request(`/api/jobs/${encodeURIComponent(activeJob)}`, { method: 'DELETE' });
+        phase = job.status === 'completed' ? 'completed' : ['cancelled', 'canceled', 'failed'].includes(job.status) ? job.status : 'unknown';
+      }
       fallbackController?.abort();
-    } catch (error) { if (error.status !== 404) toast(`取消请求未送达：${error.message}`, true); }
-    operation.phase = completed ? 'completed' : 'cancelled'; await retainImport(operation).catch(() => {});
+    } catch (error) { if (error.status !== 404) toast(`取消请求未确认，原任务编号已保留，可继续查询：${error.message}`, true); }
+    operation.phase = phase; await retainImport(operation).catch(() => {});
     state.importing = false; closeModal();
   }, 'secondary');
   const submit = button(activeJob ? '继续上次整理' : append ? '追加到图谱' : '开始整理', async () => {
@@ -959,7 +1019,8 @@ function openImport(options = {}) {
         if (catalog.kind === 'archive') { prepareImport(text.value); return; }
         const checked = previewConversation(text.value);
         if (checked.kind === 'conversation' && checked.totalMessages > modeLimit()) { prepareImport(text.value); return formError(previewPanel, `当前模式每次最多整理 ${modeLimit()} 条消息，请先选择范围。`); }
-        if (importBytes(readInput()) > 2 * 1024 * 1024) { prepareImport(text.value); return formError(previewPanel, '导入内容超过 2 MB，请先选择较小的范围。'); }
+        if (!withinImportLimit(readInput(), checked.kind)) { prepareImport(text.value); return formError(previewPanel, checked.kind === 'graph' ? '图谱内容超过 8 MB，请按主题拆分后导入。' : '导入内容超过 2 MB，请先选择较小的范围。'); }
+        if (checked.kind === 'graph') $('input[name="import-mode"][value="outline"]', dialog.body).checked = true;
       } catch (error) { return formError(dialog.body, error.message); }
     }
     const recovering = Boolean(activeJob);
@@ -984,7 +1045,7 @@ function openImport(options = {}) {
         }
         payload = { ...operation.input, ...(append ? { graph: baseGraph } : {}) };
         if (mode === 'ai' && (state.api.apiKey || state.api.baseUrl || state.api.model)) payload.api = { ...state.api };
-        if (new TextEncoder().encode(JSON.stringify(payload)).byteLength > 2 * 1024 * 1024) throw new Error('完整导入请求超过 2 MB，请截取较短的讨论或拆分后导入。');
+        if (new TextEncoder().encode(JSON.stringify(payload)).byteLength > 32 * 1024 * 1024) throw new Error('包含已有图谱的完整请求超过 32 MB，请减少内容或建立新图谱。');
       }
       if (mode === 'ai') {
         let job;
@@ -1006,8 +1067,12 @@ function openImport(options = {}) {
           job = await request('/api/jobs', { method: 'POST', body: JSON.stringify({ id: activeJob, kind: append ? 'append' : 'import', input: payload }) });
           operation.jobId = activeJob = job.id;
           if (cancelled) {
-            await request(`/api/jobs/${encodeURIComponent(activeJob)}`, { method: 'DELETE' }).catch(error => toast(`后台整理尚未确认停止：${error.message}`, true));
-            operation.phase = 'cancelled'; await retainImport(operation); return;
+            operation.phase = 'unknown';
+            try {
+              const stopped = await request(`/api/jobs/${encodeURIComponent(activeJob)}`, { method: 'DELETE' });
+              operation.phase = stopped.status === 'completed' ? 'completed' : ['cancelled', 'canceled', 'failed'].includes(stopped.status) ? stopped.status : 'unknown';
+            } catch (error) { toast(`后台整理尚未确认停止，原任务编号已保留：${error.message}`, true); }
+            await retainImport(operation); return;
           }
         }
         operation.phase = 'running'; await retainImport(operation);
@@ -1049,6 +1114,8 @@ function openImport(options = {}) {
   }, 'primary', 'sparkles');
   dialog.footer.append(cancel, submit); title.focus();
   if (mobile?.text) prepareImport(mobile.text);
+  if (options.autoResume && activeJob) submit.click();
+  return operation;
 }
 
 function openSettings() {
@@ -1178,6 +1245,7 @@ function openRelationSuggestions() {
 }
 async function downloadResponse(path, filename) {
   const response = await fetch(path);
+  if (response.status === 401) showSessionExpired();
   if (!response.ok) throw new Error(`下载失败（${response.status}）`);
   const blob = await response.blob(), url = URL.createObjectURL(blob);
   const anchor = el('a', { href: url, download: filename }); document.body.append(anchor); anchor.click(); anchor.remove();
@@ -1277,7 +1345,22 @@ function openSourcePicker(node) {
 function confirmDelete(graph) {
   const dialog = modal('删除本地图谱', '这会删除知识库中的保存文件。');
   dialog.body.append(el('p', { class: 'notice', text: `即将删除「${graph.title}」。建议先导出需要保留的内容。当前打开的内容会保留为未保存草稿。` }));
-  const remove = button('删除已保存文件', async () => { remove.disabled = true; try { await request(`/api/graphs/${encodeURIComponent(graph.id)}`, { method: 'DELETE' }); state.library = state.library.filter(item => item.id !== graph.id); if (state.graph?.id === graph.id) { state.saved = false; state.dirty = true; state.autoSavePaused = true; state.graph.revision = 0; remember(); } else { state.drafts.delete(graph.id); await draftStore.remove(graph.id).catch(() => {}); } renderHeader(); renderLibrary(); closeModal(); toast('已删除本地保存文件'); } catch (error) { formError(dialog.body, error.message); remove.disabled = false; } }, 'danger-button', 'trash');
+  const remove = button('删除已保存文件', async () => {
+    remove.disabled = true; deletingGraphs.add(graph.id);
+    try {
+      // Finish a previously admitted write before deleting; block new autosaves
+      // until the retained draft has been marked as explicitly paused.
+      if (saveInFlight.has(graph.id)) await saveInFlight.get(graph.id);
+      await request(`/api/graphs/${encodeURIComponent(graph.id)}`, { method: 'DELETE', body: JSON.stringify({ expectedRevision: state.drafts.get(graph.id)?.graph.revision ?? graph.revision }) });
+      state.library = state.library.filter(item => item.id !== graph.id);
+      state.conflictIds.delete(graph.id);
+      if (state.graph?.id === graph.id) {
+        state.saved = false; state.dirty = true; state.autoSavePaused = true; state.graph.revision = 0; remember();
+      } else { state.drafts.delete(graph.id); await draftStore.remove(graph.id).catch(() => {}); }
+      renderHeader(); renderLibrary(); closeModal(); toast('已删除保存文件，当前打开的草稿不会自动重新保存。');
+    } catch (error) { formError(dialog.body, error.message); remove.disabled = false; }
+    finally { deletingGraphs.delete(graph.id); }
+  }, 'danger-button', 'trash');
   dialog.footer.append(button('取消', closeModal, 'secondary'), remove);
 }
 
@@ -1308,14 +1391,15 @@ document.addEventListener('input', event => {
 document.addEventListener('focusout', event => { if (event.target.closest('#inspector')) liveEditKey = null; });
 $('#library-search').addEventListener('input', event => { state.libraryQuery = event.target.value; renderLibrary(); });
 window.addEventListener('online', scheduleSave);
-window.addEventListener('message', event => {
+window.addEventListener('message', async event => {
   if (event.source !== window || event.origin !== location.origin || event.data?.type !== 'chatgraph:import' || event.data.version !== 1) return;
   const capture = event.data.capture;
   const acknowledge = (ok, error) => window.postMessage({ type: 'chatgraph:import:ack', version: 1, requestId: event.data.requestId, ok, ...(error ? { error } : {}) }, location.origin);
   if (state.importing || $('#modal-root').children.length) return acknowledge(false, '请先完成或关闭当前对话框。');
   if (!capture || !Array.isArray(capture.messages) || !capture.messages.length || capture.messages.length > 500 || capture.messages.some(message => !message || typeof message.content !== 'string' || !['user','assistant','unknown'].includes(message.role)) || new TextEncoder().encode(JSON.stringify(capture)).byteLength > 2 * 1024 * 1024) return acknowledge(false, '捕获数据无效或超过导入范围。');
-  openImport({ capture: { ...capture, title: String(capture.title || '').slice(0, 200), url: /^https?:\/\//i.test(capture.url || '') ? capture.url : '', capture: { ...capture.capture, warnings: Array.isArray(capture.capture?.warnings) ? capture.capture.warnings.filter(value => typeof value === 'string') : [] } } });
-  acknowledge(true);
+  const operation = openImport({ capture: { ...capture, title: String(capture.title || '').slice(0, 200), url: /^https?:\/\//i.test(capture.url || '') ? capture.url : '', capture: { ...capture.capture, warnings: Array.isArray(capture.capture?.warnings) ? capture.capture.warnings.filter(value => typeof value === 'string') : [] } } });
+  try { await retainImport(operation); acknowledge(true); }
+  catch { acknowledge(false, '浏览器无法持久保存收到的原文，请复制或下载备份后重试。'); }
 });
 $('#search').addEventListener('input', event => { state.query = event.target.value; renderGraph(); if (state.view === 'outline') renderOutline(); if (state.view === 'source') renderSources(); if (state.view === 'timeline') renderTimeline(); });
 $('.search-control').addEventListener('click', () => { $('.search-control').classList.add('expanded'); $('#search').focus(); });
@@ -1354,6 +1438,7 @@ async function boot() {
   const chooseSelection = graph => graph.nodes.find(node => node.id === 'demo-ownership')?.id || graph.nodes.find(node => node.type === 'claim' && node.status === 'confirmed')?.id || graph.nodes.find(node => node.type === 'claim')?.id || null;
   if (results[3].status === 'fulfilled') {
     state.pendingImports = draftStore.recoverableImports(results[3].value);
+    state.foreignImports = foreignImportReceipts(results[3].value);
     const validDrafts = results[3].value.filter(draft => draft?.dirty && draft.graph?.id && Array.isArray(draft.graph.nodes) && Array.isArray(draft.graph.messages));
     state.foreignDrafts = validDrafts.filter(draft => !draftStore.owns(draft));
     const candidates = validDrafts.filter(draft => draftStore.owns(draft));

@@ -1,4 +1,4 @@
-# ChatGraph 0.3 接口与数据契约
+# ChatGraph 0.4.2 接口与数据契约
 
 Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 ChatGPT MCP 服务在独立目录安装依赖。公开字段均经白名单验证，凭据不属于图谱模型。
 
@@ -21,7 +21,7 @@ Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 Chat
 
 ## HTTP
 
-错误格式 `{error:string}`。默认 localhost:4317；普通 JSON 请求上限 2 MB，备份请求 50 MB。处理文字最多 500 条消息/200 节点。API 响应不缓存。
+错误格式 `{error:string}`。默认 localhost:4317；普通 JSON 请求上限 32 MiB，规范化图谱总量 8 MiB，备份请求及网页备份输出 50 MiB。处理文字最多 500 条消息/200 节点。API 响应不缓存。
 
 | 方法 | 路径 | 请求或结果 |
 |---|---|---|
@@ -30,12 +30,13 @@ Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 Chat
 | GET | /api/demo | 虚构演示图谱 |
 | GET | /api/graphs | 图谱摘要数组，损坏项含 recoveryRequired:true |
 | POST | /api/graphs | 请求图谱，返回保存后的图谱与 revision |
-| GET/DELETE | /api/graphs/:id | 读取/可恢复删除 |
+| GET | /api/graphs/:id | 读取 |
+| DELETE | /api/graphs/:id | `{expectedRevision}`，可恢复删除；缺失版本 428，版本过期 409 |
 | GET | /api/graphs/:id/history | `[{version,createdAt,title,nodeCount}]` |
 | POST | /api/graphs/:id/restore | `{version,expectedRevision}`，也兼容 revision；损坏文件恢复 expectedRevision:null |
 | POST | /api/import | `{text,title?,platform?,url?,complete?,mode,api?}`，生成但不保存 |
 | POST | /api/append | 同上加 graph，返回合并但未保存的图谱 |
-| POST | /api/jobs | `{id?:客户端UUID,kind:import或append,input}`，202 返回任务，相同 id 幂等返回原任务 |
+| POST | /api/jobs | `{id?:客户端UUID,kind:import或append,input}`，202 返回任务，相同 id 与原输入幂等返回原任务；新任务复用 id 但更换原文或处理参数返回 409 |
 | GET/DELETE | /api/jobs/:id | 状态/取消 |
 | GET | /api/search?q= | 全文检索结果数组 |
 | POST | /api/search | `{query,api?}`，AI 关联检索结果数组，matchType:semantic |
@@ -51,7 +52,7 @@ Node.js 20+，浏览器 ES Modules。核心服务不依赖 npm 包；可选 Chat
 | POST | /api/login | 托管工作区密码登录 `{password}` |
 | POST | /api/logout | 清除登录会话 |
 
-任务为 `{id,kind,status,progress,message,createdAt,updatedAt,result?,error?}`；status 为 queued/running/completed/failed/cancelled；progress 为 0–100。队列单并发，最多五个待运行任务。客户端在请求前保留 UUID，相同 UUID 的并发/重复提交及服务重启后的查询不会启动第二次模型调用。只持久化状态和结果，不持久化请求中的模型配置；中断任务在重启后明确失败，未自动重新收费。任务记录真正不存在才返回 404；损坏返回 422，无法读取返回 503，后两者阻止相同 UUID 新建。任务状态写入经 fsync 后原子替换。取消不能退还已由模型服务消耗的 token。
+任务为 `{id,kind,status,progress,message,createdAt,updatedAt,result?,error?}`；status 为 queued/running/completed/failed/cancelled；progress 为 0–100。队列单并发，最多五个待运行任务。客户端在请求前保留 UUID，相同 UUID 的并发/重复提交及服务重启后的查询不会启动第二次模型调用。只持久化状态和结果，不持久化请求中的模型配置；中断任务在重启后明确失败，未自动重新收费。任务记录真正不存在才返回 404；损坏返回 422，无法读取返回 503，后两者阻止相同 UUID 新建。任务状态写入经 fsync 后原子替换，POSIX 同步包含目录和新建父目录。任务只保存不含 API Key 的请求摘要，不公开该摘要。0.4.1 旧回执没有摘要，保持读取兼容且不自动重跑。取消不能退还已由模型服务消耗的 token。
 
 AI 设置可由服务器 `.env` 或当前页面内存提供。网页 api 结构 `{baseUrl,model,apiKey,reasoningEffort?}`。自定义地址不得获取其他端点的服务器密钥。原始对话是资料，不是系统指令。
 
@@ -74,3 +75,11 @@ AI 设置可由服务器 `.env` 或当前页面内存提供。网页 api 结构 
 原生 Android / iOS 接收用户主动分享的数据，先写设备私有目录或 App Group。用户点击导入后，在配置的 HTTPS WebView 来源执行 `mobile.js` 交接；等待 IndexedDB 保存并核对记录内容后才清除原生副本。iOS 共享扩展不强制拉起主 App。原生 App 不包含 Node 服务或模型 Key，工作区仍独立部署。
 
 托管模式由 CHATGRAPH_PUBLIC_ORIGIN 启用，需要 HTTPS 根域名和至少 16 字符的 CHATGRAPH_AUTH_PASSWORD。单一拥有者的会话 Cookie 保护工作区，分享令牌只开放对应快照。托管不等于多租户服务，不支持多个 Node 进程写同一目录。MCP OAuth 与此登录独立。
+
+## 0.4.2 运行约束
+
+图谱/任务/分享统一使用原子替换；POSIX 同步文件及目录，Windows 仅文件同步。完整模型响应（含推理字段）流式限制 8 MiB；超限中止且不重试。后台队列一并发，直接 AI 接口（导入、追加、检索、关系建议）共用一个并发位；断开连接会中止直接请求，已耗 token 无法撤销。
+
+头部接收 15 秒、请求正文 60 秒、空闲 keep-alive 5 秒，直接连接无活动 10 分钟关闭。登录过期保留当前编辑，可在原页重新登录；取消状态不明保留原 UUID 供查询。手机收件更新须匹配已有记录，防止旧窗口覆盖新内容。扩展 ACK 成功以 IndexedDB 提交为前提。
+
+原生客户端版本 0.4.2 建议连接同版或更新服务。所有图谱编辑客户端升级后才支持带 revision 的删除契约；旧客户端缺字段会收到 428，不会误删。已有超过 8 MiB 的图谱读入时标记需要恢复，原文件保留，先完整备份再按主题拆分。超 50 MiB 知识库使用停机全量快照工具，不能通过网页备份迁移。

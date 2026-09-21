@@ -2,6 +2,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validateGraph } from './conversations.mjs';
+import { atomicWriteFile, durableRemoveFile } from './atomic-file.mjs';
+import { MAX_BACKUP_BYTES } from './limits.mjs';
 
 const queues = new Map();
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -30,14 +32,7 @@ export function createGraphStore({ dataDir }) {
     return next.finally(() => { if (queues.get(directory) === next) queues.delete(directory); });
   }
   async function atomicJSON(file, value) {
-    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    try {
-      const handle = await fs.open(temporary, 'wx', 0o600);
-      try { await handle.writeFile(JSON.stringify(value, null, 2)); await handle.sync(); }
-      finally { await handle.close(); }
-      await fs.rename(temporary, file);
-    } finally { await fs.rm(temporary, { force: true }).catch(() => {}); }
+    return atomicWriteFile(file, JSON.stringify(value, null, 2));
   }
   async function read(file) {
     let value;
@@ -47,7 +42,7 @@ export function createGraphStore({ dataDir }) {
       throw error('图谱文件损坏；原文件已保留，可从历史版本或备份恢复。', 422);
     }
     try { return validateGraph(value); }
-    catch { throw error('图谱数据无法验证；原文件已保留，可从历史版本或备份恢复。', 422); }
+    catch (cause) { throw error(`图谱数据无法验证：${cause.message} 原文件已保留，可从历史版本或备份恢复。`, 422); }
   }
   async function load(id) {
     const graph = await read(graphFile(id));
@@ -69,10 +64,13 @@ export function createGraphStore({ dataDir }) {
     const graph = validateGraph(input);
     const existing = await maybeLoad(graph.id);
     checkRevision(graph.revision, existing?.revision ?? 0);
-    if (existing) await atomicJSON(revisionFile(existing.id, existing.revision), existing);
     graph.revision = Math.max(existing?.revision ?? 0, await lastHistoricalRevision(graph.id)) + 1;
     graph.createdAt = existing?.createdAt || graph.createdAt;
     graph.updatedAt = new Date().toISOString();
+    // Revision digits and normalized timestamps can grow at the exact byte limit.
+    // Validate the final persisted record before changing either current/history.
+    validateGraph(graph);
+    if (existing) await atomicJSON(revisionFile(existing.id, existing.revision), existing);
     // The current graph is authoritative. A crash before rename leaves it intact.
     await atomicJSON(graphFile(graph.id), graph);
     return graph;
@@ -126,12 +124,13 @@ export function createGraphStore({ dataDir }) {
         if (cause.status !== 422 || expectedRevision !== null) throw cause;
         const snapshot = await read(revisionFile(id, version));
         if (snapshot.id !== id || snapshot.revision !== version) throw error('历史版本内容与编号不一致。', 422);
+        snapshot.revision = Math.max(version, await lastHistoricalRevision(id)) + 1;
+        snapshot.updatedAt = new Date().toISOString();
+        validateGraph(snapshot);
         const original = await fs.readFile(graphFile(id));
         const recoveryDir = path.join(directory, '.recovery');
         await fs.mkdir(recoveryDir, { recursive: true, mode: 0o700 });
         await fs.writeFile(path.join(recoveryDir, `${id}.${randomUUID()}.corrupt`), original, { flag: 'wx', mode: 0o600 });
-        snapshot.revision = Math.max(version, await lastHistoricalRevision(id)) + 1;
-        snapshot.updatedAt = new Date().toISOString();
         await atomicJSON(graphFile(id), snapshot);
         return snapshot;
       }
@@ -146,7 +145,7 @@ export function createGraphStore({ dataDir }) {
       const graph = await load(id);
       if (expectedRevision !== undefined) checkRevision(expectedRevision, graph.revision);
       await atomicJSON(revisionFile(id, graph.revision), graph);
-      await fs.unlink(graphFile(id));
+      await durableRemoveFile(graphFile(id));
       return { ok: true, id, recoverable: true };
     });
   }
@@ -169,8 +168,14 @@ export function createGraphStore({ dataDir }) {
   async function backup() {
     return serialized(async () => {
       const graphs = [], damaged = [];
+      let bytes = 1024;
       for await (const { item, graph } of scan()) {
-        if (graph) graphs.push(graph);
+        if (graph) {
+          // Keep the downloaded JSON re-importable through the 50 MiB endpoint.
+          bytes += Buffer.byteLength(JSON.stringify(graph)) + 1;
+          if (bytes > MAX_BACKUP_BYTES) throw error('知识库超过 50 MiB 网页备份范围，请使用部署提供的全量数据目录备份；不会生成无法还原的不完整备份。', 413);
+          graphs.push(graph);
+        }
         else damaged.push(item);
       }
       if (damaged.length) throw error(`有 ${damaged.length} 个损坏图谱，无法生成完整备份。请先恢复它们；也可直接复制整个数据目录保留原始文件。`, 422);

@@ -2,6 +2,8 @@
 
 目标是在手机上把一段对话交给 ChatGraph，核对原文和角色后生成知识图谱。iOS、Android 的应用隔离并不提供“安装一次就读取所有 AI App 聊天记录”的通用权限。当前采用用户主动分享、Safari 页面采集和文件导入。
 
+0.4.2 提供 [Android 原生 App](android/README.md) 与 [iOS 主 App / 分享扩展工程](ios/README.md)。Android 压缩包内是 debug 签名 APK；iOS 未签名 IPA 仍需维护者配置 Apple 签名与 App Group 才能安装。下面保留 PWA、快捷指令和浏览器扩展入口。所有入口都需要手机可访问的 HTTPS 工作区。
+
 ## 先准备手机可访问的工作区
 
 部署自己的 HTTPS ChatGraph，参见 [`../deploy/README.md`](../deploy/README.md)。在手机浏览器打开并登录，再进入 `/mobile-inbox.html`。可通过浏览器的“添加到主屏幕”使用移动入口；Android 上系统是否显示安装按钮取决于浏览器和安装条件。

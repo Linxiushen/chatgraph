@@ -164,8 +164,27 @@ try {
   assert.match(await page.locator('.import-selection .form-error').textContent(), /2 MB/);
   assert.equal(await page.getByLabel('对话内容', { exact: true }).inputValue(), '');
   await page.getByRole('button', { name: '取消', exact: true }).click();
-  assert.equal(paidCalls, 0); assert.deepEqual(errors, []);
   console.log('PASS encoded UTF-8 request limit rejects an oversized selected range before storage or network');
+
+  const largeGraph = { ...graph, id: 'large-graph-restore-fixture', revision: 0, title: '完整中文图谱恢复', messages: [
+    ...graph.messages.map(message => ({ ...message, content: '中'.repeat(70_000) })),
+    ...Array.from({ length: 10 }, (_, index) => ({ id: `large-extra-${index}`, role: 'user', content: '文'.repeat(70_000) })),
+  ] };
+  assert.ok(Buffer.byteLength(JSON.stringify(largeGraph)) > 2 * 1024 * 1024);
+  await page.locator('[data-action="import"]').click();
+  await upload(JSON.stringify(largeGraph, null, 2));
+  await page.getByRole('button', { name: '使用这张图谱', exact: true }).click();
+  assert.equal(await page.locator('input[name="import-mode"][value="outline"]').isChecked(), true);
+  await page.getByLabel('对话内容', { exact: true }).fill('\uFEFF' + JSON.stringify(largeGraph));
+  await page.getByRole('button', { name: '开始整理', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  await page.waitForFunction(() => document.querySelector('#save-state')?.textContent.includes('已保存'));
+  const restoredId = (await (await context.request.get(`${base}/api/graphs`)).json()).find(item => item.title === largeGraph.title).id;
+  const restored = await (await context.request.get(`${base}/api/graphs/${restoredId}`)).json();
+  assert.deepEqual(restored.messages, largeGraph.messages);
+  assert.deepEqual(restored.edges, largeGraph.edges);
+  assert.equal(paidCalls, 0); assert.deepEqual(errors, []);
+  console.log('PASS saved graph above 2 MiB restores every UTF-8 source and relationship without invoking a model');
 } catch (error) {
   if (page) { await page.screenshot({ path: path.join(output, 'import-browser-failure.png'), fullPage: true }).catch(() => {}); console.error((await page.locator('body').innerText()).slice(-6000)); }
   throw error;

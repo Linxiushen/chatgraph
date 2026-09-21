@@ -13,7 +13,7 @@ function message(value, error = false) {
   target.hidden = !value;
 }
 function formData() {
-  return { ...(selected ? { id: selected.id, createdAt: selected.createdAt } : {}), title: title.value, text: selectedFile?.text ?? text.value, url: url.value, fileName: selectedFile?.fileName || '' };
+  return { ...(selected ? { id: selected.id, revision: selected.revision, createdAt: selected.createdAt } : {}), title: title.value, text: selectedFile?.text ?? text.value, url: url.value, fileName: selectedFile?.fileName || '' };
 }
 function updateSource() {
   let linked = false;
@@ -93,7 +93,7 @@ async function refreshQueue() {
     remove.addEventListener('click', async () => {
       remove.disabled = true;
       try {
-        await removeMobileShare(item.id);
+        if (!await removeMobileShare(item.id, item.revision)) { await refreshQueue(); throw new Error(MOBILE_SHARE_ERRORS.conflict); }
         if (selected?.id === item.id) newEntry();
         await refreshQueue();
         message('已从这台设备的收件箱移除。');

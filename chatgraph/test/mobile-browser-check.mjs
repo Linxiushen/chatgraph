@@ -236,6 +236,21 @@ try {
   assert.notEqual(recreated.replacement.id, recreated.initial.id);
   assert.equal(recreated.retained.text, '用户：RECREATED_RECEIPT');
   check('unchanged receipts preserve revisions and recreated receipts cannot be deleted by stale completion');
+  const conflict = await loginPage.evaluate(async () => {
+    const { saveMobileShare, readMobileShare, removeMobileShare } = await import('/mobile.js');
+    const original = await saveMobileShare({ title: '并发窗口', text: '用户：初始原文' });
+    const newer = await saveMobileShare({ ...original, text: '用户：窗口B已经保存的新原文' });
+    let code;
+    try { await saveMobileShare({ ...original, text: '用户：窗口A过期的修改不能覆盖B' }); } catch (error) { code = error.code; }
+    const retained = await readMobileShare(original.id);
+    await removeMobileShare(newer.id, newer.revision);
+    return { code, retained, newer };
+  });
+  assert.equal(conflict.code, 'conflict');
+  assert.equal(conflict.retained.text, conflict.newer.text);
+  assert.equal(conflict.retained.revision, conflict.newer.revision);
+  check('stale mobile inbox edits cannot overwrite a newer copy in another window');
+
 
   let mockProviderCalls = 0, modelStarted;
   const started = new Promise(resolve => { modelStarted = resolve; });

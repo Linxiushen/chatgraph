@@ -310,7 +310,8 @@ button svg {
   padding:4px;
   border-radius:4px
 }
-.library-entry:hover .library-remove {
+.library-entry:hover .library-remove,
+.library-entry:focus-within .library-remove {
   display:block
 }
 .library-remove svg {
@@ -2621,4 +2622,12 @@ button:disabled { opacity: .45; cursor: default; }
   .timeline-event { padding-left: 19px; }
   .history-entry { gap: 8px; }
   .history-entry .compact { font-size: 9px; padding: 0 7px; }
+}
+
+.session-expired { position: fixed; z-index: 10000; top: 12px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 24px); padding: 12px 16px; border: 1px solid #b66a24; border-radius: 12px; background: #fff7e8; color: #513414; box-shadow: 0 6px 24px #0002; display: flex; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+.session-expired input { width: 160px; padding: 6px 8px; border: 1px solid #bca78b; border-radius: 6px; background: white; }
+.session-expired button { padding: 6px 10px; border-radius: 6px; background: #513414; color: white; }
+@media (hover: none) {
+  .library-remove { display: block; min-width: 40px; min-height: 40px; top: 4px; }
+  .library-link { padding-right: 44px; }
 }

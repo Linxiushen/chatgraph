@@ -4,6 +4,20 @@ services:
       context: ../..
       dockerfile: chatgraph/deploy/Dockerfile
     restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 30s
+    tmpfs: ["/tmp:size=32m,noexec,nosuid"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       CHATGRAPH_HOST: 0.0.0.0
       CHATGRAPH_PORT: 4317
@@ -13,13 +27,21 @@ services:
       CHATGRAPH_MODEL: deepseek-v4-pro
       CHATGRAPH_REASONING_EFFORT: max
       CHATGRAPH_API_KEY: ${CHATGRAPH_API_KEY:?Set your provider key}
-      CHATGRAPH_DATA_DIR: /data
+      CHATGRAPH_DATA_DIR: ${CHATGRAPH_DATA_DIR:-/data}
     volumes:
       - chatgraph_data:/data
     networks: [chatgraph]
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports: ["80:80", "443:443"]
     environment:
       CHATGRAPH_DOMAIN: ${CHATGRAPH_DOMAIN:?Set CHATGRAPH_DOMAIN}

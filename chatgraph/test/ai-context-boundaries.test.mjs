@@ -107,8 +107,8 @@ test('invalid provider envelopes and body-stream failures use stable errors with
   const input = { text: '用户：选择 A。' };
   for (const [provider, expected] of [
     [() => Response.json(null), /响应格式/],
-    [() => ({ ok: true, status: 200, json: async () => { throw Object.assign(new Error('fixture'), { name: 'TimeoutError' }); } }), /超过/],
-    [() => ({ ok: true, status: 200, json: async () => { throw new TypeError('fixture'); } }), /传输中断/],
+    [() => new Response(new ReadableStream({ start(controller) { controller.error(Object.assign(new Error('fixture'), { name: 'TimeoutError' })); } })), /超过/],
+    [() => new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('fixture')); } })), /传输中断/],
     [() => new Response('not-json'), /无法解析/],
   ]) {
     let calls = 0;
@@ -146,7 +146,7 @@ test('cancellation during response reading never becomes a JSON repair or succes
     let calls = 0;
     const options = { env, signal: controller.signal, fetchImpl: async () => {
       calls++;
-      return { ok: true, status: 200, json: async () => { controller.abort(); throw new DOMException('fixture', 'AbortError'); } };
+      return new Response(new ReadableStream({ pull(stream) { controller.abort(); stream.error(new DOMException('fixture', 'AbortError')); } }));
     } };
     const graph = organizeConversation({ text: '用户：选择 A。' });
     const store = { list: async () => [{ id: graph.id }], load: async () => graph };

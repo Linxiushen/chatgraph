@@ -1,6 +1,6 @@
 # ChatGraph iOS 原生客户端
 
-版本 0.4.1（build 5），最低 iOS / iPadOS 16。此目录是可供 Xcode 编译和签名的完整原生工程，包含 SwiftUI 主 App、WKWebView 工作区和系统分享扩展；没有第三方 Swift 依赖，也没有内置 API Key、工作区账号或密码。
+版本 0.4.2（build 6），最低 iOS / iPadOS 16。此目录是可供 Xcode 编译和签名的完整原生工程，包含 SwiftUI 主 App、WKWebView 工作区和系统分享扩展；没有第三方 Swift 依赖，也没有内置 API Key、工作区账号或密码。
 
 **源代码 ZIP 不是可直接安装的 iPhone 安装包。** 如压缩包附带 `ChatGraph-unsigned.ipa`，它是实际编译的未签名 App，仍须用你的 Apple 开发者身份签名后才能真机安装。TestFlight / App Store 分发必须使用 Apple Developer 团队并完成平台流程；本工程不代表已经通过审核。
 
@@ -22,6 +22,8 @@
 使用同一仓库的 `chatgraph/deploy` 部署方式提供可访问的 HTTPS 工作区。先在手机 Safari 验证地址能打开和登录，然后填入 App。支持正常有效证书；没有关闭 TLS 校验或开放任意 HTTP 访问。
 
 工作区地址保存在本 App 的偏好设置，密码仅在网页中输入。本机队列在你点击导入之前不会发送到服务器。导入只是打开网页预览，调用 AI 仍需在工作区确认。
+
+原生收件箱只清理已确认超过保留期的完整记录。临时读盘失败、保护状态或 JSON 损坏会显示错误并保留原件；调整手机时钟也不会立即删除未来时间戳的内容。确认保存时重新计算新记录的保留起点。若确实需要丢弃无法读取的记录，可在工作区设置中选择“清空本机待导入内容”并确认删除。
 
 ## 在 Xcode 里安装到自己的 iPhone
 
@@ -76,5 +78,5 @@ xcodebuild -project ChatGraph.xcodeproj -scheme ChatGraph -configuration Release
 - iOS 不允许本 App 在后台读取 ChatGPT、DeepSeek 等其他 App 的全部聊天记录。需要来源 App 主动提供分享，或用户复制 / 导出文件。
 - 来源 App 常常只分享 URL；这不意味着已拿到原文。工作区会提示补充原文，不会冒充抓取私有聊天。
 - 原生 App 不含 Safari 网页采集扩展；项目另有 `mobile/safari-shortcut.js` 供用户在 Safari 对当前已加载页面运行快捷指令。
-- Web 工作区的浏览器下载与原生文件分享不是同一套功能；此版没有为 WKWebView 的所有 blob 下载实现原生导出适配，必要时在 Safari 工作区导出。
+- Web 工作区的浏览器下载与原生文件分享不是同一套功能；此版没有为 WKWebView 的所有 blob 下载实现原生导出适配，可从 App 菜单“在 Safari 打开（用于导出）”进入同一工作区操作，Safari 可能要求重新登录。
 - 未提供通用可直接安装的签名 IPA；签名凭据、Apple 开发者团队、工作区域名需要由部署者提供。

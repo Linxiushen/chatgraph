@@ -2,7 +2,7 @@
 
 ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合系统分享、粘贴、文件导入和 Safari 快捷指令。打开 ChatGraph 不会自动获得其他 AI App 的聊天记录。手机系统允许接收用户主动交出的内容；浏览器采集需要用户在相应网页中运行。
 
-0.4.1 另提供 Android 原生 App 和 iOS 主 App / 分享扩展。Android 独立压缩包附测试签名 APK，iOS 包附未签名 IPA 与 Xcode 工程；iOS 安装需要配置自己的 Apple 签名和 App Group。首次启动均需填写已部署的 HTTPS 工作区。详见 [Android](../mobile/android/README.md) 与 [iOS](../mobile/ios/README.md)；以下 PWA 接入方式仍然保留。
+0.4.2 提供 Android 原生 App 和 iOS 主 App / 分享扩展。Android 独立压缩包附测试签名 APK，iOS 包附未签名 IPA 与 Xcode 工程；iOS 安装需要配置自己的 Apple 签名和 App Group。首次启动均需填写已部署的 HTTPS 工作区。详见 [Android](../mobile/android/README.md) 与 [iOS](../mobile/ios/README.md)；以下 PWA 接入方式仍然保留。
 
 ## 本轮交付与平台边界
 
@@ -13,8 +13,8 @@ ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合�
 | 系统分享至 ChatGraph | 分享方实际提供的标题、文本、链接或支持的文件 | 支持 Web Share Target 的 Android 浏览器；先安装 PWA，系统面板是否出现以设备为准 |
 | Safari 快捷指令采集 | 当前 Safari 页面已渲染的对话；角色无法识别时标为未知 | iPhone / iPad；启用脚本、配置快捷指令后从 Safari 分享菜单运行 |
 | Safari Web Extension | 获准访问的 Safari 网页内容 | 原理可行；需打包、兼容性验证、用户安装授权及真机测试，本仓库不附已签名 iOS 安装包 |
-| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的文字或单个文件 | 0.4.1 提供测试签名 APK，需自行安装、配置工作区并真机验证 |
-| iOS 原生分享扩展 | 宿主主动提供的文本、链接或单个文件，先保存到 App Group | 0.4.1 提供未签名 IPA / Xcode 工程，需开发者签名和 App Group 能力后真机安装 |
+| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的文字或单个文件 | 0.4.2 提供测试签名 APK，需自行安装、配置工作区并真机验证 |
+| iOS 原生分享扩展 | 宿主主动提供的文本、链接或单个文件，先保存到 App Group | 0.4.2 提供未签名 IPA / Xcode 工程，需开发者签名和 App Group 能力后真机安装 |
 
 桌面 Chrome 扩展不能当成 Android Chrome 扩展安装。Google 的“在手机上安装扩展”帮助实际指 **Add to Desktop**，最后在电脑 Chrome 使用。其他 Android 浏览器的扩展支持各不相同，本轮不据此声称已经适配。
 
@@ -53,6 +53,7 @@ DeepSeek API Key 仍保存在服务端私有配置中。手机和分享脚本不
 - 离线能力限于已缓存的手机入口和本地收件。生成 AI 图谱、加载服务端知识库和保存到服务端都需要网络。
 - Service Worker 不缓存工作区根页面、知识库 API、分享快照或模型响应。收件箱并非加密保险箱；它属于当前设备和浏览器的数据，浏览器清理站点数据后会丢失。
 - 账号导出文件需要在工作区明确选择会话和消息范围。只有确认的内容进入后续整理流程，不能把整份账号导出当成一段对话自动发送。
+- 原生收件箱与网页收件箱有不同生命周期。Android 原件保留至网页确认保存或用户删除；iOS App Group 原件保留 24 小时。读取错误不会被当成删除授权，用户可在原生界面明确清空损坏记录。Android 0.4.2 会恢复中断写入的元数据并对仍在队列中的 Intent 重放去重；iOS 不再因手机时钟回拨而立即删除记录。
 
 ## 为什么不做“启动后自动读取所有 AI App”
 
@@ -65,6 +66,8 @@ Android 的分享 Intent 也只是接收主动分享的数据。无障碍读取�
 ## 验证范围与原生构建现状
 
 移动浏览器自动化覆盖手机尺寸的收件、预览和整理流程；这类测试不等价于在真实 iPhone / Android 上从系统分享面板启动应用。真实 AI 网页 DOM 变化、系统安装提示、系统分享文件类型和 Safari 快捷指令弹窗仍需要设备验证。
+
+0.4.2 的原生验证增加 JVM 临时目录队列回归和 Swift/Foundation 文件系统检查，覆盖中断写入恢复、旧版本备份、并发容量、重复分享、损坏记录保留及时间边界。Android debug 构建使用测试签名，CI 不同构建的签名可能不同，不能保证覆盖升级；必须先完成整理或导出，再考虑卸载。正式 Android 发行签名、Apple 团队签名及真实设备验收仍需要维护者环境。
 
 0.4.0 开发时，本机只有 Apple Command Line Tools，没有完整 Xcode 或 Android 工具链。0.4.1 已补齐隔离的 JDK 17、Android SDK 35 和 Gradle 8.9，并在本机及 CI 编译、lint 和验证测试 APK；iOS 使用 GitHub macOS Xcode 编译了主 App 与分享扩展，产出未签名 IPA。仍未进行真实手机验收、Apple 分发签名或商店审核。Apple 另提供 App Store Connect 的 Safari Web Extension Packager，可通过网页上传浏览器扩展并生成 iOS/macOS App；该路径仍需开发者账号、兼容性检查、TestFlight 和审核。
 

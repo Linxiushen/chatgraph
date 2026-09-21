@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_GRAPH_BYTES } from './limits.mjs';
 import { parseConversation } from '../public/import-model.js';
 export { parseConversation } from '../public/import-model.js';
 
@@ -195,6 +196,7 @@ export function validateGraph(value) {
     unique(graph.sessions, '对话批次');
   }
   if (input.analysis !== undefined) graph.analysis = cleanAnalysis(input.analysis, timestamp);
+  if (Buffer.byteLength(JSON.stringify(graph), 'utf8') > MAX_GRAPH_BYTES) fail('图谱内容及引用元数据超过 8 MiB，请按主题拆分图谱；原始数据未修改。');
   return graph;
 }
 

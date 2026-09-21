@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { createJobQueue } from '../lib/jobs.mjs';
 import { createGraphStore } from '../lib/store.mjs';
 import { organizeConversation } from '../lib/conversations.mjs';
+import { createShareStore } from '../lib/shares.mjs';
 
 async function temporaryDirectory(t) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'chatgraph-reliability-'));
@@ -99,4 +100,82 @@ test('search stays available when another tab deletes a graph during the library
   assert.deepEqual(entries.map(item => item.id).sort(), ['b-keep-during-scan', 'c-needs-recovery']);
   assert.equal(entries.find(item => item.id === 'c-needs-recovery').recoveryRequired, true);
   await assert.rejects(store.backup(), error => error.status === 422);
+});
+
+test('a failed atomic replacement preserves the original graph and leaves no temporary partial share', async t => {
+  const dataDir = await temporaryDirectory(t);
+  const store = createGraphStore({ dataDir });
+  const graph = await store.save(organizeConversation({ text: 'User: 原来的可靠版本' }));
+  const file = path.join(dataDir, `${graph.id}.json`);
+  const original = await fs.readFile(file, 'utf8');
+  const shares = createShareStore({ dataDir });
+  const originalRename = fs.rename;
+  fs.rename = async (from, to) => {
+    if (to === file || to.startsWith(path.join(dataDir, '.shares'))) throw Object.assign(new Error('injected disk failure'), { code: 'EIO' });
+    return originalRename(from, to);
+  };
+  try {
+    await assert.rejects(store.save({ ...graph, title: '尚未写入的新内容' }), error => error.code === 'EIO');
+    assert.equal(await fs.readFile(file, 'utf8'), original);
+    await assert.rejects(shares.create({ graph }), error => error.code === 'EIO');
+    assert.deepEqual(await shares.list(), []);
+    assert.ok((await fs.readdir(dataDir)).every(name => !name.endsWith('.tmp')));
+    assert.ok((await fs.readdir(path.join(dataDir, '.shares'))).every(name => !name.endsWith('.tmp')));
+  } finally { fs.rename = originalRename; }
+  assert.equal((await store.save({ ...graph, title: '故障恢复后的内容' })).title, '故障恢复后的内容');
+});
+
+test('damaged share expiry never makes a snapshot permanent and revocation still works', async t => {
+  const dataDir = await temporaryDirectory(t);
+  const shares = createShareStore({ dataDir });
+  const shared = await shares.create({ graph: organizeConversation({ text: 'User: 分享快照' }) });
+  const file = path.join(dataDir, '.shares', `${shared.token}.json`);
+  const damaged = { ...JSON.parse(await fs.readFile(file, 'utf8')), expiresAt: 'invalid date' };
+  await fs.writeFile(file, JSON.stringify(damaged));
+  await assert.rejects(shares.load(shared.token), error => error.status === 422);
+  assert.equal(await fs.readFile(file, 'utf8'), JSON.stringify(damaged));
+  assert.deepEqual(await shares.list(), []);
+  assert.equal((await shares.remove(shared.token)).ok, true);
+  await assert.rejects(shares.load(shared.token), error => error.status === 404);
+});
+
+test('share revocation waits for durable deletion and retries the directory flush after a failure', async t => {
+  if (process.platform === 'win32') return t.skip('Node cannot fsync directories on Windows');
+  const dataDir = await temporaryDirectory(t);
+  const shares = createShareStore({ dataDir });
+  const shared = await shares.create({ graph: organizeConversation({ text: 'User: 必须持久撤回' }) });
+  const originalOpen = fs.open;
+  let flushes = 0;
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (args[0] === path.join(dataDir, '.shares')) {
+      const originalSync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        flushes++;
+        if (flushes === 1) throw Object.assign(new Error('injected directory sync failure'), { code: 'EIO' });
+        return originalSync();
+      };
+    }
+    return handle;
+  };
+  try {
+    await assert.rejects(shares.remove(shared.token), error => error.code === 'EIO');
+    assert.equal((await shares.remove(shared.token)).ok, true);
+    assert.equal(flushes, 2, 'idempotent retry still durably records an absent token');
+    await assert.rejects(shares.load(shared.token), error => error.status === 404);
+  } finally { fs.open = originalOpen; }
+});
+
+test('web backups reject libraries larger than the restore endpoint without silently dropping graphs', async t => {
+  const dataDir = await temporaryDirectory(t);
+  const graph = organizeConversation({ text: 'User: 网页备份容量' });
+  graph.messages = Array.from({ length: 20 }, (_, index) => ({ id: index ? `source-${index}` : 'm-1', role: 'user', content: '中'.repeat(100000) }));
+  for (let index = 0; index < 9; index++) {
+    const id = `backup-size-${index}`;
+    await fs.writeFile(path.join(dataDir, `${id}.json`), JSON.stringify({ ...graph, id }));
+  }
+  const store = createGraphStore({ dataDir });
+  await assert.rejects(store.backup(), error => error.status === 413 && /50 MiB.*全量数据目录备份/.test(error.message));
+  assert.equal((await store.list()).length, 9);
+  assert.equal((await store.load('backup-size-8')).messages[19].content, graph.messages[19].content);
 });

@@ -78,7 +78,10 @@ public final class MainActivity extends Activity {
         Button open = button("打开工作区", () -> openWorkspace("")); open.setEnabled(!workspace.isEmpty()); body.addView(open);
         Button browser = button("在系统浏览器中打开（用于导出）", () -> external(Uri.parse(workspace + "/"))); browser.setEnabled(!workspace.isEmpty()); body.addView(browser);
         body.addView(text("本机待导入", 21));
-        List<JSONObject> items = store.list();
+        List<JSONObject> items;
+        boolean storageFailed = false;
+        try { items = store.list(); }
+        catch (IOException error) { items = Collections.emptyList(); storageFailed = true; body.addView(text(error.getMessage(), 14)); }
         if (items.isEmpty()) body.addView(text("还没有待导入内容。可从其他 App 分享，也可打开工作区粘贴或选择文件。", 14));
         for (JSONObject item : items) {
             String id = item.optString("id");
@@ -91,9 +94,12 @@ public final class MainActivity extends Activity {
             })); remove.setEnabled(!receiving); body.addView(remove);
         }
         body.addView(text("内容会保留到导入成功或手动删除。传入工作区后，网页收件箱按其 24 小时规则清理。ChatGraph 无法读取其他 App 的历史聊天。", 13));
-        Button clear = button("清除全部本机待导入内容", () -> confirm("清空本机收件箱", "此操作会删除尚未导入的内容。", () -> { store.clear(); banner = "本机收件箱已清空。"; showHome(); })); clear.setEnabled(!receiving && !items.isEmpty()); body.addView(clear);
+        Button clear = button("清除全部本机待导入内容", () -> confirm("清空本机收件箱", "此操作会删除尚未导入的内容。", () -> {
+            try { store.clear(); banner = "本机收件箱已清空。"; showHome(); }
+            catch (IOException error) { alert("未能完整清空收件箱，请重试。"); }
+        })); clear.setEnabled(!receiving && (!items.isEmpty() || storageFailed)); body.addView(clear);
         body.addView(button("忘记工作区并退出登录", () -> confirm("忘记工作区", "清除地址、网页登录和网页存储。本机待导入内容仍保留。", () -> { clearWebStorage(); destroyWeb(); workspace = ""; getPreferences(MODE_PRIVATE).edit().remove("workspace").apply(); banner = "工作区设置已清除。"; showHome(); })));
-        body.addView(text("Android 测试版 0.4.1-beta.1 · 不包含云服务或 API 密钥", 12));
+        body.addView(text("Android 测试版 0.4.2-beta.1 · 不包含云服务或 API 密钥", 12));
         setContentView(scroll);
     }
     static String validateWorkspace(String value) throws Exception {

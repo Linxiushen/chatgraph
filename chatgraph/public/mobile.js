@@ -19,6 +19,7 @@ export const MOBILE_SHARE_ERRORS = Object.freeze({
   url: '来源链接须为有效的 HTTP 或 HTTPS 地址。',
   format: '分享内容格式不正确，请返回原应用，复制文字或选择对话文件。',
   storage: '浏览器暂时无法保存待整理内容。请开启网站存储，或复制文字后直接进入工作台导入。',
+  conflict: '这份内容已在另一个窗口更新。当前输入仍保留，请复制需要保留的修改，再重新打开收件箱中的最新内容。',
   full: '手机收件箱已满。请先整理或删除已有内容，再重新分享。',
   unavailable: '未找到这份待整理内容，可能已整理、已删除，或已超过 24 小时。',
 });
@@ -163,6 +164,7 @@ export async function saveMobileShare(input) {
   const record = normalizeMobileShare(input);
   return inboxTransaction((store, records) => {
     const previous = records.find(entry => entry.id === record.id);
+    if (previous && input.revision !== undefined && input.revision !== (previous.revision || 1)) fail('conflict');
     // A draft can outlive its inbox entry. Never recycle its id/revision pair:
     // an older completed import may still hold a receipt for that pair.
     if (input.id && !previous) record.id = globalThis.crypto.randomUUID();

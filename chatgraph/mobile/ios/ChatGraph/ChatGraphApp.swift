@@ -47,6 +47,7 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
+                        Button { model.openInSafari() } label: { Label("在 Safari 打开（用于导出）", systemImage: "safari") }
                         Button { model.openInbox() } label: { Label("工作区收件箱", systemImage: "tray") }
                         Button { filePicker = true } label: { Label("导入对话文件", systemImage: "doc.badge.plus") }
                         Button { model.webView.reload() } label: { Label("刷新页面", systemImage: "arrow.clockwise") }
@@ -73,13 +74,14 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var address = ""
     @State private var error = ""
+    @State private var clearConfirmation = false
     var body: some View {
         NavigationStack {
             Form {
                 Section("HTTPS 工作区") {
                     TextField("https://graph.example.com", text: $address).keyboardType(.URL)
                         .textContentType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("填写你部署的 ChatGraph 根地址（0.4.0 或以上）。手机不能连接电脑的 127.0.0.1。登录密码只在工作区页面填写。")
+                    Text("填写你部署的 ChatGraph 根地址（0.4.1 或以上）。手机不能连接电脑的 127.0.0.1。登录密码只在工作区页面填写。")
                         .font(.footnote)
                 }
                 Section("收件与隐私") {
@@ -92,9 +94,14 @@ struct SettingsView: View {
                     do { try model.configure(address); dismiss() }
                     catch { self.error = error.localizedDescription }
                 }.disabled(model.transferring)
+                Button("清空本机待导入内容", role: .destructive) { clearConfirmation = true }.disabled(model.transferring)
             }.navigationTitle("工作区设置")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
                 .onAppear { address = model.workspace }
+                .confirmationDialog("清空本机收件箱？", isPresented: $clearConfirmation, titleVisibility: .visible) {
+                    Button("删除全部本机待导入内容", role: .destructive) { model.clearPending() }
+                    Button("取消", role: .cancel) {}
+                } message: { Text("这会删除尚未导入的原件，包括暂时无法读取的记录。已保存在工作区的图谱不受影响。") }
         }
     }
 }

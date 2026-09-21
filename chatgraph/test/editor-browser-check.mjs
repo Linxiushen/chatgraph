@@ -145,6 +145,7 @@ try {
     window.postMessage({ type: 'chatgraph:import', version: 1, requestId, capture: { title: '浏览器捕获预览', platform: 'DeepSeek', url: 'https://chat.deepseek.com/a/chat/example', messages: [{ id: 'capture-user', role: 'user', content: '只预览，不自动发送到模型。' }], capture: { complete: 'unknown', warnings: ['当前分支可能尚未全部加载。'] } } }, location.origin);
   }));
   assert.equal(ack.ok, true);
+  assert.ok(await page.evaluate(async () => (await (await import('/draft-store.js')).draftStore.all()).some(record => record.kind === 'pending-import' && record.input.title === '浏览器捕获预览')), 'Extension ACK must follow a committed local receipt');
   assert.equal(await page.getByLabel('这次思考的标题', { exact: true }).inputValue(), '浏览器捕获预览');
   assert.match(await page.locator('.capture-notice').textContent(), /完整性尚未确认/);
   assert.equal((await (await context.request.get(`${base}/api/graphs`)).json()).length, 2);
@@ -282,6 +283,139 @@ try {
   const remainingReceipts = await recoveryPage.evaluate(async operationId => (await (await import('/draft-store.js')).draftStore.all()).filter(record => record.kind === 'pending-import' && record.operationId === operationId), receipt.operationId);
   assert.equal(remainingReceipts.length, 0);
   console.log('PASS refreshing a paid running task recovers original input and polls the same job with one provider call');
+  // A lost cancellation response must retain the paid job identity. It is not
+  // evidence that the provider stopped, even if the modal has been dismissed.
+  const cancellationJob = '00000000-0000-4000-8000-000000000091';
+  const cancellationGraph = { ...(await (await context.request.get(`${base}/api/graphs/${(await (await context.request.get(`${base}/api/graphs`)).json()).find(item => item.title === '刷新中继续 AI 整理').id}`)).json()), id: 'graph-cancel-recovery', revision: 0, title: '取消状态不确定恢复' };
+  let cancellationPosts = 0, cancellationReady = false;
+  await recoveryPage.route('**/api/jobs', route => { cancellationPosts++; return route.fulfill({ status: 202, json: { id: cancellationJob, status: 'running' } }); });
+  await recoveryPage.route(`**/api/jobs/${cancellationJob}`, route => route.request().method() === 'DELETE' ? route.abort() : route.fulfill({ json: cancellationReady ? { id: cancellationJob, status: 'completed', result: cancellationGraph } : { id: cancellationJob, status: 'running' } }));
+  await recoveryPage.locator('[data-action="import"]').first().click();
+  await recoveryPage.getByLabel('对话内容', { exact: true }).fill('用户：取消失败以后必须查询原任务，不能重复花钱。');
+  await recoveryPage.locator('input[name="import-mode"][value="ai"]').check();
+  await recoveryPage.getByRole('button', { name: '开始整理', exact: true }).click();
+  await recoveryPage.waitForFunction(() => document.querySelector('.import-progress p')?.textContent === '正在整理对话…');
+  await recoveryPage.getByRole('button', { name: '停止整理', exact: true }).click();
+  await recoveryPage.waitForSelector('.modal-backdrop', { state: 'detached' });
+  const uncertain = await recoveryPage.evaluate(async id => (await (await import('/draft-store.js')).draftStore.all()).find(record => record.jobId === id), cancellationJob);
+  assert.equal(uncertain.phase, 'unknown');
+  cancellationReady = true;
+  await recoveryPage.locator('#resume-import').click();
+  await recoveryPage.getByRole('button', { name: '继续上次整理', exact: true }).click();
+  await recoveryPage.waitForSelector('.modal-backdrop', { state: 'detached' }); await saved(recoveryPage);
+  assert.equal(cancellationPosts, 1);
+  await recoveryPage.unroute('**/api/jobs'); await recoveryPage.unroute(`**/api/jobs/${cancellationJob}`);
+  console.log('PASS failed cancellation retains the job receipt and resumes without a second paid submission');
+
+  await recoveryPage.locator('.graph-node[data-node="recovered-choice"]').click();
+  let expired = true;
+  await recoveryPage.route('**/api/graphs', route => route.request().method() === 'POST' && expired ? route.fulfill({ status: 401, json: { error: 'session-expired-fixture' } }) : route.continue());
+  await recoveryPage.route('**/api/login', async route => { assert.equal(route.request().postDataJSON().password, 'synthetic-reauthentication-fixture'); expired = false; await route.fulfill({ json: { ok: true } }); });
+  await recoveryPage.getByLabel('编辑观点名称', { exact: true }).fill('登录过期也不能丢失的当前编辑');
+  await recoveryPage.locator('#session-expired').waitFor();
+  await recoveryPage.screenshot({ path: path.join(output, 'session-expired-recovery.png') });
+  assert.equal(new URL(recoveryPage.url()).pathname, '/');
+  assert.equal(await recoveryPage.getByLabel('编辑观点名称', { exact: true }).inputValue(), '登录过期也不能丢失的当前编辑');
+  await recoveryPage.getByLabel('重新登录工作区密码', { exact: true }).fill('synthetic-reauthentication-fixture');
+  await recoveryPage.getByRole('button', { name: '重新登录', exact: true }).click();
+  await recoveryPage.locator('#session-expired').waitFor({ state: 'detached' }); await saved(recoveryPage);
+  assert.ok((await (await context.request.get(`${base}/api/graphs/graph-cancel-recovery`)).json()).nodes.some(node => node.label === '登录过期也不能丢失的当前编辑'));
+  await recoveryPage.unroute('**/api/graphs'); await recoveryPage.unroute('**/api/login');
+  console.log('PASS expired login preserves the live editor and reauthenticates within the same WebView');
+
+  const failedAck = await recoveryPage.evaluate(async () => {
+    const { draftStore } = await import('/draft-store.js');
+    const original = draftStore.putImport; draftStore.putImport = () => Promise.reject(new Error('quota-fixture'));
+    try {
+      return await new Promise(resolve => {
+        const requestId = 'capture-storage-failure';
+        const receive = event => { if (event.data?.type === 'chatgraph:import:ack' && event.data.requestId === requestId) { window.removeEventListener('message', receive); resolve(event.data); } };
+        window.addEventListener('message', receive);
+        window.postMessage({ type: 'chatgraph:import', version: 1, requestId, capture: { title: '不能虚报送达', messages: [{ role: 'user', content: '只有落盘以后才能确认送达。' }] } }, location.origin);
+      });
+    } finally { draftStore.putImport = original; }
+  });
+  assert.equal(failedAck.ok, false);
+  assert.match(await recoveryPage.getByLabel('对话内容', { exact: true }).inputValue(), /只有落盘以后/);
+  await recoveryPage.getByRole('button', { name: '取消', exact: true }).click();
+  console.log('PASS extension delivery rejects storage failure while preserving the visible original');
+
+  let releaseSave, startedSave, deleteRequests = 0;
+  const savingStarted = new Promise(resolve => { startedSave = resolve; });
+  await recoveryPage.route('**/api/graphs', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    startedSave(); await new Promise(resolve => { releaseSave = resolve; }); await route.continue();
+  });
+  await recoveryPage.route('**/api/graphs/graph-cancel-recovery', route => { if (route.request().method() === 'DELETE') { deleteRequests++; assert.ok(route.request().postDataJSON().expectedRevision > 0); } return route.continue(); });
+  await recoveryPage.getByLabel('编辑观点名称', { exact: true }).fill('删除与保存并发时保留这份草稿');
+  await recoveryPage.getByRole('button', { name: '保存', exact: true }).click();
+  await savingStarted;
+  await recoveryPage.locator('.library-entry.selected .library-link').focus();
+  await recoveryPage.getByRole('button', { name: '删除图谱 取消状态不确定恢复', exact: true }).click();
+  await recoveryPage.getByRole('button', { name: '删除已保存文件', exact: true }).click();
+  await recoveryPage.waitForTimeout(200); assert.equal(deleteRequests, 0, 'Deletion must wait for an already-admitted save');
+  releaseSave();
+  await recoveryPage.waitForSelector('.modal-backdrop', { state: 'detached' });
+  assert.match(await recoveryPage.locator('#save-state').textContent(), /自动保存已暂停/);
+  assert.equal((await context.request.get(`${base}/api/graphs/graph-cancel-recovery`)).status(), 404);
+  await recoveryPage.waitForTimeout(1400);
+  assert.equal((await context.request.get(`${base}/api/graphs/graph-cancel-recovery`)).status(), 404);
+  assert.equal(await recoveryPage.getByLabel('编辑观点名称', { exact: true }).inputValue(), '删除与保存并发时保留这份草稿');
+  await recoveryPage.unroute('**/api/graphs'); await recoveryPage.unroute('**/api/graphs/graph-cancel-recovery');
+  console.log('PASS deletion serializes with existing saves and retains a paused draft without recreating the graph');
+  // A new desktop tab gets a fresh sessionStorage owner. Recovery is visible
+  // but requires an explicit selection; a paid receipt keeps its original ID.
+  const desktopContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const closedTab = await desktopContext.newPage(); inspectedPage = closedTab;
+  closedTab.on('pageerror', error => errors.push(error.message));
+  const providerBaseline = providerCalls;
+  let desktopPosts = 0, desktopGets = 0;
+  desktopContext.on('request', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/jobs' && request.method() === 'POST') desktopPosts++;
+    if (pathname.startsWith('/api/jobs/') && request.method() === 'GET') desktopGets++;
+  });
+  await closedTab.goto(base); await closedTab.waitForSelector('.graph-node');
+  await closedTab.getByRole('button', { name: /模型与设置/ }).click();
+  await closedTab.getByLabel('API Base URL', { exact: true }).fill('https://api.deepseek.com/v1');
+  await closedTab.getByLabel('模型名称', { exact: true }).fill('fixture-model');
+  await closedTab.getByLabel('API Key', { exact: true }).fill('desktop-recovery-synthetic-key');
+  await closedTab.getByRole('button', { name: '应用到本次会话', exact: true }).click();
+  await closedTab.locator('[data-action="import"]').first().click();
+  await closedTab.getByLabel('这次思考的标题', { exact: true }).fill('关闭原标签页后的付费任务');
+  await closedTab.getByLabel('对话内容', { exact: true }).fill('用户：即使原来的标签页关闭，也要继续原来的付费任务。');
+  await closedTab.getByRole('button', { name: '开始整理', exact: true }).click();
+  await closedTab.waitForFunction(async () => (await (await import('/draft-store.js')).draftStore.all()).some(item => item.kind === 'pending-import' && item.phase === 'running'));
+  const desktopReceipt = await closedTab.evaluate(async () => {
+    const { draftStore } = await import('/draft-store.js');
+    const receipt = (await draftStore.all()).find(item => item.kind === 'pending-import');
+    await draftStore.putImport({ operationId: crypto.randomUUID(), input: { title: '未接管的其他原文', text: '用户：这份原文应继续留在原窗口命名空间。' } });
+    const graph = await (await fetch('/api/demo')).json();
+    await draftStore.put({ graph: { ...graph, id: 'untouched-desktop-edit', title: '未接管的图谱编辑' }, dirty: true, saved: false });
+    return receipt;
+  });
+  const oldOwner = await closedTab.evaluate(() => sessionStorage.getItem('chatgraph-draft-owner'));
+  await closedTab.close();
+  const freshTab = await desktopContext.newPage(); inspectedPage = freshTab;
+  freshTab.on('pageerror', error => errors.push(error.message));
+  await freshTab.goto(base); await freshTab.waitForSelector('.graph-node');
+  assert.notEqual(await freshTab.evaluate(() => sessionStorage.getItem('chatgraph-draft-owner')), oldOwner);
+  assert.equal(await freshTab.locator('#resume-import').isHidden(), true);
+  const getsBeforeRecovery = desktopGets;
+  await freshTab.locator('#recover-drafts').click();
+  assert.equal(desktopPosts, 1); assert.equal(desktopGets, getsBeforeRecovery);
+  const resumedOriginal = freshTab.waitForRequest(request => new URL(request.url()).pathname === `/api/jobs/${desktopReceipt.jobId}` && request.method() === 'GET');
+  await freshTab.getByRole('dialog').locator('.history-entry').filter({ hasText: '关闭原标签页后的付费任务' }).getByRole('button', { name: '接着整理', exact: true }).click();
+  await resumedOriginal;
+  releaseProvider();
+  await freshTab.waitForSelector('.modal-backdrop', { state: 'detached' }); await saved(freshTab);
+  assert.equal(providerCalls, providerBaseline + 1); assert.equal(desktopPosts, 1);
+  const afterDesktopRecovery = await freshTab.evaluate(async () => (await import('/draft-store.js')).draftStore.all());
+  assert.equal(afterDesktopRecovery.filter(item => item.operationId === desktopReceipt.operationId).length, 0);
+  assert.ok(afterDesktopRecovery.some(item => item.input?.title === '未接管的其他原文' && item.owner === oldOwner));
+  assert.ok(afterDesktopRecovery.some(item => item.graph?.id === 'untouched-desktop-edit' && item.owner === oldOwner));
+  await desktopContext.close();
+  console.log('PASS closed desktop tab exposes explicit recovery, resumes the same paid job once and preserves unrelated foreign drafts');
   assert.deepEqual(errors, []);
 } catch (error) {
   if (inspectedPage && !inspectedPage.isClosed()) {

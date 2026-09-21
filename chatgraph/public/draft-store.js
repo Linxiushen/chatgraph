@@ -42,10 +42,10 @@ async function transaction(mode, operation) {
 }
 
 const mobileImport = draft => /^[a-f0-9-]{36}$/.test(draft?.mobileShareId || '');
-function recoverableImports(records) {
+function recoverableImports(records, { includeForeign = false } = {}) {
   const grouped = new Map();
   for (const record of records) {
-    if (record.kind !== 'pending-import' || !record.operationId || !record.input || (!draftStore.owns(record) && !mobileImport(record))) continue;
+    if (record.kind !== 'pending-import' || !record.operationId || !record.input || (!includeForeign && !draftStore.owns(record) && !mobileImport(record))) continue;
     const copies = grouped.get(record.operationId) || [];
     copies.push(record); grouped.set(record.operationId, copies);
   }
@@ -82,15 +82,21 @@ export const draftStore = {
     const value = { id: `import:${owner}:${operation.operationId}`, owner, kind: 'pending-import', operationId: operation.operationId, input: safe,
       mobileShareId: /^[a-f0-9-]{36}$/.test(operation.mobileShareId || '') ? operation.mobileShareId : null,
       mobileShareRevision: Number.isInteger(operation.mobileShareRevision) && operation.mobileShareRevision > 0 ? operation.mobileShareRevision : null,
+      recoveredFrom: Array.isArray(operation.recoveredFrom) ? operation.recoveredFrom.filter(item => item && typeof item.id === 'string' && item.id.length <= 200 && Number.isSafeInteger(item.updatedAt)).slice(-100).map(item => ({ id: item.id, updatedAt: item.updatedAt, jobId: typeof item.jobId === 'string' ? item.jobId : null })) : [],
       targetGraphId: operation.targetGraphId || null, resultGraphId: operation.resultGraphId || null, jobId: operation.jobId || null, phase: operation.phase || 'draft', updatedAt: Date.now() };
     return transaction('readwrite', store => store.put(value));
   },
-  removeImport: (operationId, mobileShareId) => transaction('readwrite', store => {
-    if (!mobileImport({ mobileShareId })) return store.delete(`import:${owner}:${operationId}`);
+  removeImport: (operationId, mobileShareId, recoveredFrom = []) => transaction('readwrite', store => {
+    const mobile = mobileImport({ mobileShareId });
+    if (!mobile && !recoveredFrom.length) return store.delete(`import:${owner}:${operationId}`);
     const request = store.getAll();
     request.onsuccess = () => {
       for (const record of request.result) {
-        if (record.kind === 'pending-import' && record.operationId === operationId && record.mobileShareId === mobileShareId) store.delete(record.id);
+        if (record.kind !== 'pending-import' || record.operationId !== operationId) continue;
+        if (mobile ? record.mobileShareId === mobileShareId : record.id === `import:${owner}:${operationId}`) store.delete(record.id);
+        // Explicit adoption only cleans the source versions the user accepted.
+        // A different window's newer input or retry receipt must survive.
+        else if (!mobile && recoveredFrom.some(source => source.id === record.id && source.updatedAt === record.updatedAt && source.jobId === (record.jobId || null))) store.delete(record.id);
       }
     };
     return request;

@@ -53,3 +53,12 @@ PPTX 导出使用原生可编辑文本框。文稿包含封面、讨论说明、
 旧图谱读取时迁移为 schema v2，首次保存才写回。备份 JSON 包含当前版本图谱，导入同 ID 图谱会创建副本。若需同时保留历史快照、任务和分享记录，请备份整个 `chatgraph/.data` 目录。
 
 升级前保留自己的数据目录及环境变量文件，把新包解压到新目录验证，再按需指定 `CHATGRAPH_DATA_DIR`。不要把个人数据或真实密钥加入发布包。
+
+
+## 0.4.2 升级注意
+
+先停止应用并使用 `scripts/data-snapshot.mjs` 备份全部数据，校验通过后再升级；[部署手册](deploy/README.md) 提供完整命令。新图谱规范 JSON 上限为 8 MiB，HTTP 请求为 32 MiB，网页备份为 50 MiB。旧有超大图谱不会被删除，但会提示需要恢复，先保留原文件再拆分。删除接口要求 `expectedRevision`，旧页面刷新后再操作。
+
+这一版加强 Android/iOS 原生收件保护，Android versionCode 4002，iOS build 6。原生队列兼容旧数据格式，但 debug APK 的 CI 签名可能与旧包不同；不能覆盖安装时，先通过原入口转存原文再卸载。正式升级应使用固定发行密钥。iOS 未签名 IPA 仍需要 Apple 签名。旧 0.4.1 发布资产不覆盖。
+
+完整工程验收、单进程限制、外部上线条件见 [工程验收矩阵](docs/engineering-readiness.md)。

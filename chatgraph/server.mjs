@@ -15,11 +15,12 @@ import { createShareStore } from './lib/shares.mjs';
 import { createAccessControl } from './lib/access.mjs';
 import { semanticSearch, suggestRelations } from './lib/semantic.mjs';
 import { renderGraphPptx } from './lib/pptx.mjs';
+import { MAX_REQUEST_BYTES, MAX_BACKUP_BYTES } from './lib/limits.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, 'public');
 const version = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version;
-const MAX_BODY = 2 * 1024 * 1024;
+const MAX_BODY = MAX_REQUEST_BYTES;
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' };
 // Public installation and receiving screens contain no workspace data. Keep
 // this an exact allowlist: API access and the editor still require a session.
@@ -32,7 +33,8 @@ function json(res, status, body) {
 }
 
 async function readJSON(req, limit = MAX_BODY) {
-  if (!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(new Error('请求须使用 application/json。'), { status: 415 });
+  if (req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') throw Object.assign(new Error('请求须使用 application/json。'), { status: 415 });
+  if (Number(req.headers['content-length']) > limit) throw Object.assign(new Error(`请求超过 ${Math.round(limit / 1024 / 1024)} MiB，请拆分后导入。`), { status: 413 });
   let size = 0;
   const parts = [];
   for await (const part of req) {
@@ -48,6 +50,19 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
   const store = createGraphStore({ dataDir });
   const access = createAccessControl(env);
   const shares = createShareStore({ dataDir });
+  let directModelCalls = 0;
+  // A background import owns one model slot. Synchronous utilities share one
+  // additional slot, so repeated clicks cannot create unbounded paid requests.
+  async function directModel(req, res, operation) {
+    if (directModelCalls >= 1) throw Object.assign(new Error('已有一个即时 AI 请求正在处理，请等待完成后重试。'), { status: 429 });
+    directModelCalls++;
+    const controller = new AbortController();
+    const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+    req.once('aborted', disconnected);
+    res.once('close', disconnected);
+    try { return await operation({ signal: controller.signal }); }
+    finally { directModelCalls--; req.off('aborted', disconnected); res.off('close', disconnected); }
+  }
   async function importGraph(input, options = {}) {
     if (!input || typeof input !== 'object') throw new Error('请提供对话内容。');
     if (typeof input.text === 'string' && input.text.replace(/^\uFEFF/, '').trim().startsWith('{')) {
@@ -127,19 +142,19 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
       if (req.method === 'GET' && pathname === '/api/search') return json(res, 200, await store.search(url.searchParams.get('q') || ''));
       if (req.method === 'POST' && pathname === '/api/search') {
         const input = await readJSON(req);
-        return json(res, 200, await semanticSearch(store, input.query, { api: input.api, env, fetchImpl }));
+        return json(res, 200, await directModel(req, res, options => semanticSearch(store, input.query, { api: input.api, env, fetchImpl, ...options })));
       }
       if (req.method === 'POST' && pathname === '/api/relations/suggest') {
         const input = await readJSON(req);
-        return json(res, 200, await suggestRelations(input.graph, { api: input.api, env, fetchImpl }));
+        return json(res, 200, await directModel(req, res, options => suggestRelations(input.graph, { api: input.api, env, fetchImpl, ...options })));
       }
       if (req.method === 'GET' && pathname === '/api/diagnostics') return json(res, 200, await store.diagnostics());
       if (req.method === 'GET' && pathname === '/api/backup') {
         const backup = await store.backup();
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="chatgraph-backup.json"', 'Cache-Control': 'no-store' });
-        return res.end(JSON.stringify(backup, null, 2));
+        return res.end(JSON.stringify(backup));
       }
-      if (req.method === 'POST' && pathname === '/api/backup') return json(res, 200, await store.restoreBackup((await readJSON(req, 50 * 1024 * 1024)).backup));
+      if (req.method === 'POST' && pathname === '/api/backup') return json(res, 200, await store.restoreBackup((await readJSON(req, MAX_BACKUP_BYTES)).backup));
       if (req.method === 'POST' && pathname === '/api/graphs') return json(res, 200, await store.save(await readJSON(req)));
       const graphRoute = pathname.match(/^\/api\/graphs\/([^/]+)(?:\/(history|restore))?$/);
       if (graphRoute) {
@@ -150,13 +165,22 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
           return json(res, 200, await store.restore(id, input.version, Object.hasOwn(input, 'expectedRevision') ? input.expectedRevision : input.revision));
         }
         if (req.method === 'GET' && !operation) return json(res, 200, await store.load(id));
-        if (req.method === 'DELETE' && !operation) return json(res, 200, await store.remove(id));
+        if (req.method === 'DELETE' && !operation) {
+          if (!req.headers['content-type']) throw Object.assign(new Error('删除前需要当前图谱版本，请刷新知识库后重试。'), { status: 428 });
+          const input = await readJSON(req, 2048);
+          if (!Number.isSafeInteger(input?.expectedRevision) || input.expectedRevision < 1) throw Object.assign(new Error('删除前需要当前图谱版本，请刷新知识库后重试。'), { status: 428 });
+          return json(res, 200, await store.remove(id, input.expectedRevision));
+        }
       }
-      if (req.method === 'POST' && pathname === '/api/import') return json(res, 200, await importGraph(await readJSON(req)));
+      if (req.method === 'POST' && pathname === '/api/import') {
+        const input = await readJSON(req);
+        return json(res, 200, await (input?.mode === 'ai' ? directModel(req, res, options => importGraph(input, options)) : importGraph(input)));
+      }
       if (req.method === 'POST' && pathname === '/api/append') {
         const input = await readJSON(req);
         const previous = validateGraph(input.graph);
-        return json(res, 200, appendGraphs(previous, await importGraph(input)));
+        const graph = await (input.mode === 'ai' ? directModel(req, res, options => importGraph(input, options)) : importGraph(input));
+        return json(res, 200, appendGraphs(previous, graph));
       }
       if (req.method === 'POST' && pathname === '/api/jobs') {
         const { kind, input, id } = await readJSON(req);
@@ -204,16 +228,28 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
       json(res, status, { error: error.code === 'ENOENT' ? '图谱或文件不存在。' : (error.code ? '本地文件操作失败，请检查数据目录权限。' : error.message || '操作失败，请重试。') });
     }
   });
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxHeadersCount = 100;
+  server.maxRequestsPerSocket = 100;
+  // Direct analysis can make one repair attempt (2 × 240 seconds).
+  server.setTimeout(10 * 60_000, socket => socket.destroy());
   server.on('close', () => jobs.close());
   return server;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   loadPrivateConfig(path.join(root, '.env'));
+  const dataDir = process.env.CHATGRAPH_DATA_DIR || path.join(root, '.data');
+  try {
+    await fs.access(path.join(dataDir, '.incomplete'));
+    throw new Error('数据目录的恢复尚未完成（存在 .incomplete 标记），拒绝启动。请重新校验备份，并恢复到新的空目录后再启动。');
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const port = Number(process.env.CHATGRAPH_PORT || 4317);
   const host = process.env.CHATGRAPH_HOST || '127.0.0.1';
   if (host !== '127.0.0.1' && !process.env.CHATGRAPH_PUBLIC_ORIGIN) throw new Error('对外监听前须配置 HTTPS 域名和工作区密码。');
-  const server = createAppServer();
+  const server = createAppServer({ dataDir });
   server.on('error', error => { console.error(error.code === 'EADDRINUSE' ? `端口 ${port} 已被使用，请设置 CHATGRAPH_PORT。` : '服务启动失败。'); process.exitCode = 1; });
   server.listen(port, host, () => console.log(`ChatGraph → http://127.0.0.1:${server.address().port}`));
 }

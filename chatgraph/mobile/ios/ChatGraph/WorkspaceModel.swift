@@ -79,6 +79,17 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         catch { status = error.localizedDescription }
     }
 
+    func clearPending() {
+        guard !transferring else { return }
+        do { try ShareStore.clear(); refreshPending(); status = "已按你的选择清空本机收件箱。" }
+        catch { status = "未能完整清空收件箱，请重试。" }
+    }
+
+    func openInSafari() {
+        guard let url = try? Self.validatedWorkspace(workspace) else { return }
+        UIApplication.shared.open(url)
+    }
+
     /// callAsyncJavaScript supplies structured arguments and awaits the IndexedDB
     /// transaction. Native content is retained until a matching durable receipt arrives.
     func transfer(_ item: PendingShare) async -> Bool {

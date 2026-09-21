@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { resolveAIConfig } from './ai.mjs';
 import { validateGraph } from './conversations.mjs';
+import { readProviderJSON } from './provider-response.mjs';
 
 async function requestJSON(prompt, payload, { api, env = process.env, fetchImpl = fetch, signal, repairAttempt = 0 } = {}) {
   if (signal?.aborted) throw new Error('关联分析已取消。');
@@ -21,11 +22,15 @@ async function requestJSON(prompt, payload, { api, env = process.env, fetchImpl 
       signal: requestSignal,
     });
   } catch (error) { throw new Error(signal?.aborted ? '关联分析已取消。' : error.name === 'TimeoutError' ? '模型分析超时，请缩小范围后重试。' : '无法连接模型服务。'); }
-  if (!response.ok) throw new Error(`模型 API 返回 HTTP ${response.status}，请检查服务配置或额度。`);
+  if (!response.ok) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error(`模型 API 返回 HTTP ${response.status}，请检查服务配置或额度。`);
+  }
   let data;
-  try { data = await response.json(); }
+  try { data = await readProviderJSON(response, requestSignal); }
   catch (error) {
     if (signal?.aborted) throw new Error('关联分析已取消。');
+    if (error.name === 'ProviderResponseLimitError') throw error;
     if (requestSignal.aborted || error.name === 'TimeoutError') throw new Error('模型分析超时，请缩小范围后重试。');
     throw new Error(error instanceof SyntaxError ? '模型服务返回了无法解析的响应。' : '模型结果传输中断，请检查网络后重试。');
   }
@@ -56,12 +61,24 @@ async function requestJSON(prompt, payload, { api, env = process.env, fetchImpl 
 /** Model-based semantic retrieval over existing node summaries, with validated IDs. */
 export async function semanticSearch(store, query, options = {}) {
   if (typeof query !== 'string' || !query.trim() || query.length > 500) throw new Error('请输入不超过 500 字的检索问题。');
-  const graphs = [];
-  for (const item of await store.list()) if (!item.recoveryRequired) graphs.push(await store.load(item.id));
-  const candidates = graphs.flatMap(graph => graph.nodes.map(node => ({ graphId: graph.id, nodeId: node.id, title: graph.title,
-    label: node.label, summary: node.summary.slice(0, 600), stance: node.stance, status: node.status })));
+  const graphs = [], candidates = [];
+  let payloadSize = 2;
+  for (const item of await store.list()) {
+    if (item.recoveryRequired) continue;
+    let graph;
+    try { graph = await store.load(item.id); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    const nodes = graph.nodes.map(node => ({ id: node.id, label: node.label, summary: node.summary.slice(0, 600), stance: node.stance, status: node.status }));
+    for (const node of nodes) {
+      const candidate = { graphId: graph.id, nodeId: node.id, title: graph.title, label: node.label, summary: node.summary, stance: node.stance, status: node.status };
+      payloadSize += JSON.stringify(candidate).length + 1;
+      if (candidates.length >= 2500 || payloadSize > 900000) throw new Error('知识库超过本次 AI 检索范围，请先使用关键词缩小范围。');
+      candidates.push(candidate);
+    }
+    // Retrieval needs compact node metadata; never retain every full transcript.
+    graphs.push({ id: graph.id, title: graph.title, description: graph.description, updatedAt: graph.updatedAt, source: graph.source, mode: graph.mode, nodes });
+  }
   if (!candidates.length) return [];
-  if (candidates.length > 2500 || JSON.stringify(candidates).length > 900000) throw new Error('知识库超过本次 AI 检索范围，请先使用关键词缩小范围。');
   const { result } = await requestJSON('根据 query 在 candidates 中查找语义相关的观点，允许同义词和相关概念。不改变原观点含义，不编造候选项。输出 {matches:[{graphId,nodeId,score}]}，score 为 0 到 1，最多 30 项，没有相关内容返回空数组。', { query, candidates }, options);
   if (!Array.isArray(result.matches) || result.matches.length > 30) throw new Error('模型检索结果格式无效。');
   const byId = new Map(graphs.map(graph => [graph.id, graph])), hits = new Map();

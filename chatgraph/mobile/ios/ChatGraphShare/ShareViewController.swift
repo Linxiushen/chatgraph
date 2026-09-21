@@ -61,7 +61,17 @@ final class ShareViewController: UIViewController {
                 throw ShareFailure("请分享一段文字、一个链接或一个对话文件。")
             }
             var values: [PendingShare] = []
-            for provider in providers { values.append(try await Self.read(provider)) }
+            var fileCount = 0, receivedBytes = 0
+            for provider in providers {
+                let value = try await Self.read(provider)
+                if !value.fileName.isEmpty { fileCount += 1 }
+                guard fileCount <= 1 else { throw ShareFailure("一次只接收一个对话文件，请分别分享。") }
+                receivedBytes += value.bytes
+                guard receivedBytes <= (fileCount == 0 ? 2 : 27) * 1024 * 1024 else {
+                    throw ShareFailure("分享内容过大，请分别分享文字或一个对话文件。")
+                }
+                values.append(value)
+            }
             if providers.isEmpty { values.append(try PendingShare(text: attributedText).validated()) }
             let files = values.filter { !$0.fileName.isEmpty }
             guard files.count <= 1 else { throw ShareFailure("一次只接收一个对话文件，请分别分享。") }

@@ -4,8 +4,8 @@ import Foundation
 struct ValidationChecks {
     static func main() throws {
         var checks = 0
-        func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
-            guard condition() else { throw ShareFailure("Check failed: \(message)") }
+        func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+            guard try condition() else { throw ShareFailure("Check failed: \(message)") }
             checks += 1
         }
         func rejects(_ operation: () throws -> Void) throws {
@@ -35,6 +35,35 @@ struct ValidationChecks {
         try rejects { _ = try PendingShare.readFile(providerTemporaryURL, fileName: "bad.txt") }
         let roundTrip = try JSONDecoder().decode(PendingShare.self, from: JSONEncoder().encode(record))
         try require(roundTrip.id == record.id && roundTrip.text == original, "durable JSON round trip")
+        let queue = directory.appendingPathComponent("queue", isDirectory: true)
+        try ShareStore.save(record, in: queue)
+        let queued = try ShareStore.list(in: queue)
+        try require(queued.count == 1 && queued[0].text == original, "native queue durable round trip")
+        var future = record
+        future.createdAt = Date().timeIntervalSince1970 * 1000 + 60_000
+        let receipt = queue.appendingPathComponent("\(record.id).json")
+        try JSONEncoder().encode(future).write(to: receipt, options: .atomic)
+        try require(try ShareStore.list(in: queue).count == 1, "device clock rollback does not erase original")
+        let corrupted = Data("partial receipt still needed for recovery".utf8)
+        try corrupted.write(to: receipt, options: .atomic)
+        try rejects { _ = try ShareStore.list(in: queue) }
+        try require(try Data(contentsOf: receipt) == corrupted, "unreadable receipt is preserved")
+        try rejects { try ShareStore.save(PendingShare(text: "another original"), in: queue) }
+        try require(try Data(contentsOf: receipt) == corrupted, "new writes cannot bypass unreadable queue capacity")
+        try ShareStore.remove(record.id, in: queue)
+        var stale = PendingShare(text: "分享表单打开超过一天后确认保存")
+        stale.createdAt = Date().timeIntervalSince1970 * 1000 - ShareStore.ttl - 1000
+        try ShareStore.save(stale, in: queue)
+        try require(try ShareStore.list(in: queue).first?.text == stale.text, "explicit save starts a fresh retention period")
+        var expired = stale
+        expired.createdAt = Date().timeIntervalSince1970 * 1000 - ShareStore.ttl - 1000
+        try JSONEncoder().encode(expired).write(to: queue.appendingPathComponent("\(stale.id).json"), options: .atomic)
+        try require(try ShareStore.list(in: queue).isEmpty, "confirmed expired receipt is still cleaned")
+        for index in 0..<5 { try ShareStore.save(PendingShare(text: "distinct share \(index)"), in: queue) }
+        try rejects { try ShareStore.save(PendingShare(text: "sixth"), in: queue) }
+        try require(try ShareStore.list(in: queue).count == 5, "queue limit preserves the existing five receipts")
+        try ShareStore.clear(in: queue)
+        try require(try ShareStore.list(in: queue).isEmpty, "explicit clear removes receipts")
         print("Passed \(checks) iOS native input validation checks.")
     }
 }

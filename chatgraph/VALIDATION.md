@@ -2,6 +2,18 @@
 
 日期：2026-09-21。上游基线：`72c750bb070d95171dbb2244e5b62b1b7da69c12`。以下区分代码回归、真实模型、浏览器模拟与外部尚未完成的验收。
 
+## 0.4.2-beta.1 工程故障修复
+
+本轮从 `38460fd` 审查并修复付费任务幂等/取消竞态、登录过期丢失编辑、扩展落盘确认、跨设备删除、原生收件损坏恢复、大图谱边界、模型响应资源限制及完整数据恢复。逐项实现与外部上线条件见 [工程验收矩阵](docs/engineering-readiness.md)。
+
+核心 Node 回归 106 项通过，0 失败/跳过；扩展 4 项、MCP/OAuth 7 项通过，依赖审计 0 已知漏洞。浏览器已通过基础 10、编辑 19、导入 9、手机 13 组，共 51 组；截图人工核对登录过期仍保留正在编辑内容。所有故障验证使用虚构数据/模拟模型，无新增收费 API 调用。
+
+Android 最终 0.4.2-beta.1 / versionCode 4002，7 项 JVM/文件系统回归、assembleDebug、lintDebug、APK v2 签名验证通过；仅 INTERNET 权限。iOS 0.4.2 / build 6，22 项 Foundation 队列与输入检查、Swift/plist 检查通过。完整 iphoneos 编译由本版 macOS CI 提供；分发签名与真机验收仍不在此证据中。
+
+本机 Docker 实际构建通过：非 root、只读根目录、最小构建内容、带 Host 的健康检查、未登录拒绝、登录保存、容器重启、重新登录、图谱/任务回执恢复、HTML 导出、停机全量快照校验与新目录恢复。测试自动清理专用容器/卷，没有修改用户知识库。公开域名、TLS证书和手机公网访问尚未部署验证。
+
+发布包测试核对未跟踪文件不入包、符号链接拒绝、哈希、独立目录解压启动与HTML导出。Node 20 兼容回归、Node 24 主回归、原生构建和Docker恢复加入CI门禁；真实用户、Safari/真机、正式签名和商店审核没有伪称完成。
+
 ## 0.4.1-beta.1 原生 App 与独立压缩包
 
 新增 Android 原生 Java App、iOS SwiftUI 主 App 与分享扩展，以及分别包含真实编译产物的两个 ZIP。Android 最低 API 26、target/compile 35，使用 Gradle 8.9 / AGP 8.7.3 / JDK 17；`assembleDebug` 和 `lintDebug` 通过，APK Signature Scheme v2 校验通过。APK 仅声明 INTERNET 权限，不使用全盘存储、无障碍、通知监听或录屏权限。lint 的 JavaScript 开启及启动图标外形提示仍保留；JavaScript 是图谱工作区运行所需，原生交接限制为所配置的 HTTPS 来源。

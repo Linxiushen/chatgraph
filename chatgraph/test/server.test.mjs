@@ -48,7 +48,7 @@ test('save, reload, export, JSON reimport and delete preserve authored graph and
   assert.notEqual(imported.id, saved.id);
   assert.deepEqual(imported.edges, saved.edges);
   assert.deepEqual(imported.nodes, saved.nodes);
-  assert.equal((await request(`/api/graphs/${graph.id}`, undefined, { method: 'DELETE' })).status, 200);
+  assert.equal((await request(`/api/graphs/${graph.id}`, { expectedRevision: saved.revision }, { method: 'DELETE' })).status, 200);
   assert.equal((await (await request('/api/graphs')).json()).length, 0);
 });
 

@@ -1,13 +1,31 @@
 name: ChatGraph
 on:
   push:
-    paths: ['chatgraph/**', '.github/workflows/chatgraph.yml']
+    paths: ['chatgraph/**', '.dockerignore', '.github/workflows/chatgraph.yml']
   pull_request:
-    paths: ['chatgraph/**', '.github/workflows/chatgraph.yml']
+    paths: ['chatgraph/**', '.dockerignore', '.github/workflows/chatgraph.yml']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  node-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test chatgraph/test/*.test.mjs
+  container-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node chatgraph/scripts/deploy-check.mjs
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -22,7 +40,8 @@ jobs:
       - run: node scripts/generate-viewer.mjs --check
       - run: npm --prefix chatgraph/integrations/chatgpt ci --ignore-scripts
       - run: npm --prefix chatgraph/integrations/chatgpt test
-      - run: npm install --no-save --package-lock=false --prefix chatgraph playwright
+      - run: npm --prefix chatgraph/integrations/chatgpt audit --omit=dev --audit-level=high
+      - run: npm install --no-save --package-lock=false --prefix chatgraph playwright@1.62.1
       - run: node chatgraph/node_modules/playwright/cli.js install --with-deps chromium
       - run: npm run test:browser --prefix chatgraph
         env:

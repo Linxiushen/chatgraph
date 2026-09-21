@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createZip } from '../lib/zip.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,11 @@ const upstreamRevision = '72c750bb070d95171dbb2244e5b62b1b7da69c12';
 
 /** Explicit source allowlist; runtime data and credentials are never traversed. */
 export async function buildRelease({ repositoryDir = repository, outputDir } = {}) {
+  let tracked;
+  try {
+    await fs.lstat(path.join(repositoryDir, '.git'));
+    tracked = new Set(execFileSync('git', ['-C', repositoryDir, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean));
+  } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
   async function inspectPath(relative) {
     let stat;
     const segments = relative.split('/');
@@ -53,6 +59,10 @@ export async function buildRelease({ repositoryDir = repository, outputDir } = {
       return;
     }
     if (!stat.isFile()) return;
+    if (tracked && !tracked.has(relative)) {
+      if (required) throw new Error(`发布必需文件尚未加入版本控制：${relative}`);
+      return;
+    }
     const allowedSpecial = ['LICENSE', 'GRADLE-LICENSE', 'Dockerfile', 'Caddyfile', '.env.example', '.gitignore', '.dockerignore', 'gradlew', 'gradle-wrapper.jar'].includes(name);
     if (!allowedSpecial && !extensions.has(path.extname(name))) return;
     if (stat.size > 8 * 1024 * 1024) throw new Error(`发布源文件超过 8 MB，请检查：${relative}`);

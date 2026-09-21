@@ -4,7 +4,7 @@
 
 ![ChatGraph 工作区演示](chatgraph/docs/workspace.png)
 
-**0.4.1-beta.1** 增加 Android 原生 App 和 iOS 主 App / 分享扩展工程，提供分别打包的 Android 测试 APK 与待签名 iOS IPA。保留可安装 PWA、手机收件箱和 Safari 快捷指令。已有 DeepSeek V4 Pro 结构化、账号导出预览、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出、浏览器扩展和可选 ChatGPT MCP 组件。
+**0.4.2-beta.1** 加固任务幂等、故障恢复、原生收件队列与部署备份；提供 Android 原生 App 和 iOS 主 App / 分享扩展工程，提供分别打包的 Android 测试 APK 与待签名 iOS IPA。保留可安装 PWA、手机收件箱和 Safari 快捷指令。已有 DeepSeek V4 Pro 结构化、账号导出预览、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出、浏览器扩展和可选 ChatGPT MCP 组件。
 
 原生 App 首次启动需填写已部署的 HTTPS 工作区；PWA 从 `/mobile-inbox.html` 进入。电脑 `localhost` 不能直接供手机访问。Android 包使用测试签名，iOS IPA 未签名，需自己的 Apple 团队配置后安装；两者尚未上架或进行真实手机验收。见 [Android 使用说明](chatgraph/mobile/android/README.md)、[iOS 构建与签名](chatgraph/mobile/ios/README.md) 和 [手机接入说明](chatgraph/docs/mobile-platforms.md)。
 
@@ -22,6 +22,7 @@ node chatgraph/server.mjs
 - [浏览器扩展与 ChatGPT 集成](chatgraph/integrations/README.md)
 - [Docker / HTTPS 部署](chatgraph/deploy/README.md)
 - [发布包与 PowerPoint 导出](chatgraph/RELEASE.md)
+- [工程验收矩阵与上线缺口](chatgraph/docs/engineering-readiness.md)
 - [验证记录与实际限制](chatgraph/VALIDATION.md)
 - [产品设计](chatgraph/PRODUCT.md) · [接口契约](chatgraph/CONTRACT.md)
 
