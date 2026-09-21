@@ -66,7 +66,7 @@ Android 的分享 Intent 也只是接收主动分享的数据。无障碍读取�
 
 移动浏览器自动化覆盖手机尺寸的收件、预览和整理流程；这类测试不等价于在真实 iPhone / Android 上从系统分享面板启动应用。真实 AI 网页 DOM 变化、系统安装提示、系统分享文件类型和 Safari 快捷指令弹窗仍需要设备验证。
 
-开发环境检查（2026-09-21）：只有 Apple Command Line Tools；未安装完整 Xcode / iPhoneOS SDK，也未安装 Android SDK、ADB 或 Gradle。因此没有在本机编译、签名或真机验证 IPA/APK。Apple 当前另提供 App Store Connect 的 Safari Web Extension Packager，可通过网页上传扩展并生成 iOS/macOS App；这仍需要 Apple Developer Program 账号、App Store Connect 权限、兼容性检查、TestFlight 和审核，本次没有代替用户创建账号或提交审核。
+0.4.0 开发时，本机只有 Apple Command Line Tools，没有完整 Xcode 或 Android 工具链。0.4.1 已补齐隔离的 JDK 17、Android SDK 35 和 Gradle 8.9，并在本机及 CI 编译、lint 和验证测试 APK；iOS 使用 GitHub macOS Xcode 编译了主 App 与分享扩展，产出未签名 IPA。仍未进行真实手机验收、Apple 分发签名或商店审核。Apple 另提供 App Store Connect 的 Safari Web Extension Packager，可通过网页上传浏览器扩展并生成 iOS/macOS App；该路径仍需开发者账号、兼容性检查、TestFlight 和审核。
 
 ## 官方资料
 
