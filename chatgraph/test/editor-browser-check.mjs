@@ -125,6 +125,17 @@ try {
   assert.equal(library.length, 2);
   console.log('PASS full-library backup download and conflict-safe copy restore');
 
+  const backupGuidance = '知识库超过 50 MiB 网页备份范围，请使用部署提供的全量数据目录备份；不会生成无法还原的不完整备份。';
+  await page.route('**/api/backup', route => route.fulfill({ status: 413, json: { error: backupGuidance } }));
+  await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
+  await page.getByRole('button', { name: '下载完整知识库备份', exact: true }).click();
+  await page.getByRole('dialog').locator('.form-error').waitFor();
+  assert.equal(await page.getByRole('dialog').locator('.form-error').textContent(), backupGuidance);
+  assert.equal(await page.getByRole('button', { name: '下载完整知识库备份', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.unroute('**/api/backup');
+  console.log('PASS oversized backup preserves server guidance to use a complete data snapshot');
+
   await page.getByRole('button', { name: '导出', exact: true }).click();
   await page.getByRole('button', { name: '创建只读分享链接', exact: true }).click();
   await page.getByRole('button', { name: '创建只读链接', exact: true }).click();

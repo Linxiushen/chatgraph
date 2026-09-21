@@ -6,9 +6,9 @@
 
 本轮从 `38460fd` 审查并修复付费任务幂等/取消竞态、登录过期丢失编辑、扩展落盘确认、跨设备删除、原生收件损坏恢复、大图谱边界、模型响应资源限制及完整数据恢复。逐项实现与外部上线条件见 [工程验收矩阵](docs/engineering-readiness.md)。
 
-核心 Node 回归 106 项通过，0 失败/跳过；扩展 4 项、MCP/OAuth 7 项通过，依赖审计 0 已知漏洞。浏览器已通过基础 10、编辑 19、导入 9、手机 13 组，共 51 组；截图人工核对登录过期仍保留正在编辑内容。所有故障验证使用虚构数据/模拟模型，无新增收费 API 调用。
+核心 Node 回归 106 项通过，0 失败/跳过；扩展 4 项、MCP/OAuth 7 项通过，依赖审计 0 已知漏洞。浏览器已通过基础 10、编辑 20、导入 9、手机 13 组，共 52 组；截图人工核对登录过期仍保留正在编辑内容。所有故障验证使用虚构数据/模拟模型，无新增收费 API 调用。
 
-Android 最终 0.4.2-beta.1 / versionCode 4002，7 项 JVM/文件系统回归、assembleDebug、lintDebug、APK v2 签名验证通过；仅 INTERNET 权限。iOS 0.4.2 / build 6，22 项 Foundation 队列与输入检查、Swift/plist 检查通过。完整 iphoneos 编译由本版 macOS CI 提供；分发签名与真机验收仍不在此证据中。
+Android 最终 0.4.2-beta.1 / versionCode 4002，7 项 JVM/文件系统回归、assembleDebug、lintDebug、APK v2 签名验证通过；仅 INTERNET 权限。iOS 0.4.2 / build 6，22 项 Foundation 队列与输入检查、Swift/plist 检查通过。完整 iphoneos 主 App 和分享扩展已在[本版 macOS CI](https://github.com/Linxiushen/chatgraph/actions/runs/35580727523)编译通过；分发签名与真机验收仍不在此证据中。
 
 本机 Docker 实际构建通过：非 root、只读根目录、最小构建内容、带 Host 的健康检查、未登录拒绝、登录保存、容器重启、重新登录、图谱/任务回执恢复、HTML 导出、停机全量快照校验与新目录恢复。测试自动清理专用容器/卷，没有修改用户知识库。公开域名、TLS证书和手机公网访问尚未部署验证。
 

@@ -1246,7 +1246,10 @@ function openRelationSuggestions() {
 async function downloadResponse(path, filename) {
   const response = await fetch(path);
   if (response.status === 401) showSessionExpired();
-  if (!response.ok) throw new Error(`下载失败（${response.status}）`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(typeof data?.error === 'string' && data.error.trim() ? data.error : `下载失败（${response.status}）`);
+  }
   const blob = await response.blob(), url = URL.createObjectURL(blob);
   const anchor = el('a', { href: url, download: filename }); document.body.append(anchor); anchor.click(); anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
