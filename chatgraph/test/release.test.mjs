@@ -114,6 +114,10 @@ test('extracted release serves the app and standalone Archify export outside the
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(`${base}/api/health`)).status, 200);
   assert.equal((await fetch(base)).status, 200);
+  const manifest = await fetch(`${base}/manifest.webmanifest`);
+  assert.equal(manifest.status, 200);
+  assert.equal((await manifest.json()).share_target.method, 'POST');
+  assert.equal((await fetch(`${base}/mobile-assets/safari-shortcut.js`)).status, 200);
   const graph = await (await fetch(`${base}/api/demo`)).json();
   const exported = await fetch(`${base}/api/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph, format: 'html' }) });
   assert.equal(exported.status, 200);

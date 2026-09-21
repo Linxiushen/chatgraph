@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "ChatGraph · 对话图谱",
+  "short_name": "ChatGraph",
+  "description": "把 AI 对话整理成有原文依据的知识图谱",
+  "lang": "zh-CN",
+  "start_url": "/mobile-inbox.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f8f4",
+  "theme_color": "#244d3f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "整理新对话", "url": "/mobile-inbox.html", "description": "粘贴文字、导入文件或接收分享" },
+    { "name": "我的图谱", "url": "/", "description": "回顾与编辑已整理的思考" }
+  ],
+  "share_target": {
+    "action": "/mobile-share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        { "name": "files", "accept": ["text/plain", "text/markdown", "application/json", ".txt", ".md", ".markdown", ".json"] }
+      ]
+    }
+  }
+}

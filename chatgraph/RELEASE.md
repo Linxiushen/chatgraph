@@ -18,7 +18,9 @@ node chatgraph/server.mjs
 
 ## 发布内容
 
-包含 ChatGraph 服务端、网页、浏览器扩展、ChatGPT 集成源码、部署模板、测试和说明文档，以及运行 HTML 导出需要的 Archify 模板、国际化工具与许可文件。Archify 模板已经内嵌阅读器和字体，包中保留对应字体许可。
+包含 ChatGraph 服务端、网页与 PWA 资源、手机收件箱、iPhone Safari 快捷指令脚本、浏览器扩展、ChatGPT 集成源码、部署模板、测试和说明文档，以及运行 HTML 导出需要的 Archify 模板、国际化工具与许可文件。Archify 模板已经内嵌阅读器和字体，包中保留对应字体许可。
+
+手机安装需要可访问的 HTTPS 工作区。PWA 从 `/mobile-inbox.html` 添加到主屏幕；iPhone 快捷指令按 `chatgraph/mobile/README.md` 设置。发布包不包含已签名的 IPA/APK，也不代表应用商店或真实设备兼容性审核通过。
 
 发布脚本只读取明确列出的文件和源代码目录。它排除 `.env`、`.data`、`.git`、`node_modules`、历史快照、分享数据、任务数据、测试输出和构建目录。`.env.example` 是唯一允许打包的环境变量示例。符号链接会使打包失败。
 

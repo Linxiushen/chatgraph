@@ -10,6 +10,7 @@ const extractor=await readFile(new URL('../extension/extractor.js',import.meta.u
 const widget=await readFile(new URL('./chatgpt/widget.html',import.meta.url),'utf8');
 const popup=await readFile(new URL('../extension/popup.html',import.meta.url),'utf8');
 const popupScript=await readFile(new URL('../extension/popup.js',import.meta.url),'utf8');
+const destinationScript=await readFile(new URL('../extension/destination.js',import.meta.url),'utf8');
 const popupStyles=await readFile(new URL('../extension/popup.css',import.meta.url),'utf8');
 const output=fileURLToPath(new URL('../test-output/',import.meta.url));await mkdir(output,{recursive:true});
 const browser=await chromium.launch({headless:true});
@@ -50,9 +51,9 @@ try{
 
   // Exercise the real popup code with a mocked Chrome transport, not a live signed-in platform.
   const popupPage=await browser.newPage({viewport:{width:460,height:1000}});popupPage.on('pageerror',error=>errors.push(error.message));
-  await popupPage.setContent(popup.replace('<link rel="stylesheet" href="popup.css">',`<style>${popupStyles}</style>`).replace('<script src="popup.js"></script>',''));
+  await popupPage.setContent(popup.replace('<link rel="stylesheet" href="popup.css">',`<style>${popupStyles}</style>`).replace('<script src="popup.js"></script>','').replace('<script src="destination.js"></script>',''));
   await popupPage.evaluate(capture=>{globalThis.chrome={tabs:{query:async()=>[{id:1,url:'https://chatgpt.com/c/fixture'}]},scripting:{executeScript:async args=>args.files?[]:[{result:{capture}}]}};},chatgpt.value);
-  await popupPage.addScriptTag({content:popupScript});await popupPage.getByRole('button',{name:'采集当前对话',exact:true}).click();
+  await popupPage.addScriptTag({content:destinationScript});await popupPage.addScriptTag({content:popupScript});await popupPage.getByRole('button',{name:'采集当前对话',exact:true}).click();
   assert.equal(await popupPage.locator('.message').count(),3);await popupPage.getByLabel('第 2 条消息的发言者').selectOption('unknown');
   await popupPage.getByLabel('选择第 1 条消息').uncheck();assert.match(await popupPage.locator('#count').textContent(),/2 \/ 3/);
   const downloadPromise=popupPage.waitForEvent('download');await popupPage.getByRole('button',{name:'下载 JSON',exact:true}).click();const download=await downloadPromise;

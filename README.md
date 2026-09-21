@@ -4,7 +4,9 @@
 
 ![ChatGraph 工作区演示](chatgraph/docs/workspace.png)
 
-**0.3.0-beta.1** 新增账号导出的本地会话选择、原文范围预览和角色核对，改进长对话合并与任务恢复。提供 DeepSeek V4 Pro 结构化、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出，以及 Chrome/Edge 扩展和可选 ChatGPT MCP 组件。
+**0.4.0-beta.1** 新增可安装的手机 PWA、Android 兼容浏览器的系统分享接收、手机粘贴/文件收件箱和 iPhone Safari 快捷指令采集。已有 DeepSeek V4 Pro 结构化、账号导出预览、观点归属与变化、思维导图编辑、自动保存与历史恢复、追加对话、AI 关联检索、五种导出、浏览器扩展和可选 ChatGPT MCP 组件。
+
+手机从已部署的 HTTPS 工作区的 `/mobile-inbox.html` 进入。电脑 `localhost` 不能直接供手机访问；本版是 PWA 与采集脚本，不是已上架的原生 App，也不读取其他 App 的私有聊天记录。见 [手机接入说明](chatgraph/docs/mobile-platforms.md)。
 
 ## 本地运行
 

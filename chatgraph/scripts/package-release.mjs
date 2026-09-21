@@ -15,10 +15,10 @@ const paths = [
   'chatgraph/README.md', 'chatgraph/CONTRACT.md', 'chatgraph/PRODUCT.md',
   'chatgraph/UPSTREAM.md', 'chatgraph/VALIDATION.md', 'chatgraph/RELEASE.md',
   'chatgraph/lib', 'chatgraph/public', 'chatgraph/extension', 'chatgraph/integrations',
-  'chatgraph/deploy', 'chatgraph/test', 'chatgraph/scripts', 'chatgraph/research', 'chatgraph/docs',
+  'chatgraph/deploy', 'chatgraph/test', 'chatgraph/scripts', 'chatgraph/research', 'chatgraph/docs', 'chatgraph/mobile',
 ];
 const forbidden = new Set(['.git', '.data', '.history', '.recovery', '.jobs', '.shares', 'node_modules', 'test-output', 'dist', 'coverage', '.DS_Store']);
-const extensions = new Set(['.mjs', '.js', '.css', '.html', '.json', '.md', '.txt', '.svg', '.png', '.yaml', '.yml', '.sh']);
+const extensions = new Set(['.mjs', '.js', '.css', '.html', '.json', '.webmanifest', '.md', '.txt', '.svg', '.png', '.yaml', '.yml', '.sh']);
 const allowedHiddenPaths = new Set(['.dockerignore', 'chatgraph/.gitignore', 'chatgraph/.env.example']);
 const upstreamRevision = '72c750bb070d95171dbb2244e5b62b1b7da69c12';
 
@@ -89,7 +89,8 @@ export async function buildRelease({ repositoryDir = repository, outputDir } = {
   await fs.writeFile(file, body);
   await fs.writeFile(`${file}.sha256`, `${digest}  ${path.basename(file)}\n`);
   const extensionPrefix = `chatgraph-${metadata.version}/chatgraph/extension/`;
-  const extensionEntries = [...entries].filter(([name]) => name.startsWith(extensionPrefix)).map(([name, content]) => [name.slice(extensionPrefix.length), content]);
+  const extensionRuntime = new Set(['manifest.json', 'extractor.js', 'destination.js', 'popup.html', 'popup.css', 'popup.js', 'README.md', 'LICENSE']);
+  const extensionEntries = [...entries].filter(([name]) => name.startsWith(extensionPrefix) && extensionRuntime.has(name.slice(extensionPrefix.length))).map(([name, content]) => [name.slice(extensionPrefix.length), content]);
   let extension;
   if (extensionEntries.some(([name]) => name === 'manifest.json')) {
     if (!extensionEntries.some(([name]) => name === 'LICENSE')) extensionEntries.push(['LICENSE', entries.get(`chatgraph-${metadata.version}/chatgraph/LICENSE`)]);

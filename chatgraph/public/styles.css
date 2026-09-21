@@ -2588,11 +2588,21 @@ h1:hover .title-pencil {
 .suggestion-evidence details p { max-height: 180px; overflow: auto; border-left: 2px solid #dbe6d0; padding-left: 10px; }
 .inspector-placeholder > button { margin-top: 10px; width: 100%; }
 button:disabled { opacity: .45; cursor: default; }
+.mobile-inbox-link { display: flex; gap: 8px; align-items: center; margin: 0 4px 16px; padding: 10px 4px; color: #4b713b; font-size: 12px; text-decoration: none; }
+.mobile-inbox-link > span:last-child { margin-left: auto; }
+.mobile-inbox-link .icon { width: 15px; height: 15px; }
+.mobile-quick-import { display: none; }
 @media (max-width: 1050px) {
   .workbench-toolbar .view-tab { font-size: 9px; padding: 7px 6px; gap: 4px; }
   .workbench-toolbar .search-control { width: 88px; }
 }
 @media (max-width: 700px) {
+  body { min-height: 100dvh; }
+  .main { padding-top: env(safe-area-inset-top); padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+  .mobile-quick-import { display: block; position: fixed; bottom: calc(12px + env(safe-area-inset-bottom)); right: 18px; z-index: 16; padding: 12px 20px; border-radius: 28px; background: #244d3f; color: #fff; text-decoration: none; font-size: 14px; box-shadow: 0 5px 20px #244d3f30; }
+  body:has(.modal-backdrop) .mobile-quick-import { display: none; }
+  .modal input, .modal textarea, .modal select { font-size: 16px; }
+  .modal .primary, .modal .secondary, .modal .file-label { min-height: 44px; }
   .import-selection { padding: 12px; }
   .import-range { gap: 8px; flex-wrap: wrap; }
   .import-range .field { flex-basis: 35%; }

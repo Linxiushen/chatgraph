@@ -4,12 +4,13 @@
 
 ## 安装和使用
 
-1. 启动本机 ChatGraph：在仓库根目录运行 `node chatgraph/server.mjs`。
+1. 启动本机 ChatGraph：在仓库根目录运行 `node chatgraph/server.mjs`。也可使用自己已部署的 HTTPS ChatGraph。
 2. Chrome 打开 `chrome://extensions`（Edge 使用 `edge://extensions`），打开开发者模式。
 3. 选择「加载已解压的扩展程序」，选中此 `chatgraph/extension` 文件夹；若使用 ZIP，先解压到一个文件夹。
 4. 在 ChatGPT 或 DeepSeek 中打开具体对话，向上滚动加载需要的历史内容，等待回答结束。
 5. 点击扩展 →「采集当前对话」，核对首尾消息、轮数与发言角色。可以修改角色、取消选择不需要的消息。
-6. 「发送到本机 ChatGraph」会请求本机页面权限，并在 `http://127.0.0.1:4317/` 打开导入预览。接下来由你选择原文整理或 AI 整理。也可以复制 JSON 或下载 JSON 后导入。
+6. 展开「连接自己的 ChatGraph 工作区」，填写工作区根地址并保存；默认 `http://127.0.0.1:4317`。HTTPS 工作区先通过「打开工作区」登录。手机上的 `127.0.0.1` 指手机自己，不能用来访问电脑的服务。
+7. 「发送到 ChatGraph」只请求当前配置目标的页面权限，再打开导入预览。接下来由你选择原文整理或 AI 整理。也可以复制 JSON 或下载 JSON 后导入。
 
 扩展没有在 Chrome / Edge 商店发布。加载扩展需要用户操作浏览器的开发者模式。
 
@@ -26,7 +27,7 @@
 
 ## 权限和数据
 
-默认仅请求 `activeTab`、`scripting` 和 `clipboardWrite`，没有全站常驻访问权。「发送到本机」才请求 `http://127.0.0.1/*` 的可选权限。该权限用于把预览资料送到用户启动的 ChatGraph 页面，不用于访问模型服务。
+默认使用 `activeTab`、`scripting`、`clipboardWrite` 和 `storage`。`storage` 只保存工作区地址，不保存对话。manifest 声明 HTTPS 站点作为可选权限候选，不会自动取得所有站点的访问权；点击「发送」时仅请求配置的具体主机，例如 `https://graph.example.com/*`。Chrome 主机权限不能限定端口，所以发送前及注入函数内部另外检查精确 origin（包括端口）。目标跳转到其他 origin 时停止，不把对话交给跳转页面。该权限只用于工作区交接，不用于访问模型服务。
 
 采集内容只留在弹窗内存，关闭弹窗后不恢复；扩展不保存 API Key、不调用模型、不上传对话到开发者服务器。下载文件或复制到剪贴板是用户主动操作。调用 AI 整理由 ChatGraph 主程序的模型设置控制。
 
@@ -49,9 +50,9 @@
 }
 ```
 
-## 本机交接协议
+## 工作区交接协议
 
-扩展在本机页面加载后发送同窗口、同源消息：
+扩展在经过校验的工作区页面加载后发送同窗口、同源消息：
 
 ```js
 window.postMessage({
@@ -71,6 +72,10 @@ node --test chatgraph/extension/test/*.test.mjs
 node chatgraph/extension/package.mjs
 ```
 
-打包脚本需要系统 `zip`，输出在 `chatgraph/test-output/chatgraph-extension-0.2.0.zip`。只包含运行文件、此说明和 MIT 许可证，不包含对话、测试输出、模型密钥或依赖。
+打包脚本需要系统 `zip`，输出文件名使用 manifest 的版本号。只包含运行文件、此说明和 MIT 许可证，不包含对话、测试输出、模型密钥或依赖。
 
 浏览器 DOM 和弹窗验证参见 `chatgraph/integrations/browser-check.mjs`。
+
+## 手机与 Safari
+
+弹窗可适配手机宽度，HTTPS 目标消除了对电脑 localhost 的依赖。浏览器扩展本身仍需手机浏览器支持相应 API。Android Chrome 不能直接安装此桌面扩展；iPhone Safari 须通过 Apple 的 Web Extension 打包及签名流程安装，当前没有发布已签名的 iOS 包。可立即配置的 Safari 快捷指令和原生 App 分享方式见仓库中的 `chatgraph/mobile/README.md`，移动地址和权限浏览器检查见 `chatgraph/mobile/browser-check.mjs`。实际 Safari 扩展/第三方 Android 扩展浏览器尚待真机验证。

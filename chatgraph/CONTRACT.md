@@ -61,6 +61,14 @@ AI 设置可由服务器 `.env` 或当前页面内存提供。网页 api 结构 
 
 草稿放在当前来源的 IndexedDB，只包含图谱/原文编辑数据，不包含 API 设置。自动保存保留服务器 revision，409 显示复制草稿或载入新版本的选择。移动端默认大纲。
 
-扩展使用用户点击后的页面 DOM 采集，并展示范围和角色预览。向本地工作区传递 `chatgraph:import` postMessage，页面核对自身来源、消息类型和负载后打开导入预览，不自动调用模型。接口也能读取标准 messages JSON 中的 capture/source 元数据。
+扩展使用用户点击后的页面 DOM 采集，并展示范围和角色预览。向所选本机或 HTTPS 工作区传递 `chatgraph:import` postMessage；按需请求目标站点权限，注入前再次核对含端口的 origin。页面核对自身来源、消息类型和负载后打开导入预览，不自动调用模型。接口也能读取标准 messages JSON 中的 capture/source 元数据。
+
+## 手机接收协议
+
+`/manifest.webmanifest` 定义独立启动入口 `/mobile-inbox.html` 和 POST multipart `/mobile-share`，接收 `title/text/url/files`。此 POST 由已安装 PWA 的 Service Worker 处理，验证后只写设备 IndexedDB，再以 303 导航到带不透明 UUID 的收件箱。它不是服务器上传 API；未被拦截的同源请求返回 405，不解析、保存或反射正文。真实系统分享可用性由移动浏览器决定。
+
+`mobile.js` 对文字限 2 MB、单文件限 25 MB，仅接收 UTF-8 TXT/Markdown/JSON；拒绝二进制、多个文件、不安全来源链接。纯 URL 表示链接，无对话原文。收件箱最多 5 份、合计 50 MB，24 小时后下次访问时清理，可主动删除。收件箱可暂存完整账号导出，只有在工作台选择的会话/范围进入导入草稿及后续请求；成功生成并保留图谱草稿后移除收件原件。
+
+收件箱以 sessionStorage 和 `#mobile-import=<UUID>` 传递记录 ID，URL 不包含对话。刷新后沿用已保留的导入任务，避免重复调用模型。公共安装和收件界面使用精确静态资源白名单；知识库/API 的身份和来源校验保持有效。Service Worker 只缓存公共收件界面、图标和离线说明，不缓存编辑器、API 或私有图谱。离线暂存需先在线打开入口，联网后才能生成/保存图谱。
 
 托管模式由 CHATGRAPH_PUBLIC_ORIGIN 启用，需要 HTTPS 根域名和至少 16 字符的 CHATGRAPH_AUTH_PASSWORD。单一拥有者的会话 Cookie 保护工作区，分享令牌只开放对应快照。托管不等于多租户服务，不支持多个 Node 进程写同一目录。MCP OAuth 与此登录独立。

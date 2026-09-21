@@ -61,6 +61,8 @@ export const draftStore = {
     const safe = { text: input.text || '', title: input.title || '', platform: input.platform || '', url: input.url || '', mode: input.mode || 'outline' };
     if (input.capture) safe.capture = { scope: input.capture.scope, complete: input.capture.complete, warnings: input.capture.warnings, capturedAt: input.capture.capturedAt };
     const value = { id: `import:${owner}:${operation.operationId}`, owner, kind: 'pending-import', operationId: operation.operationId, input: safe,
+      mobileShareId: /^[a-f0-9-]{36}$/.test(operation.mobileShareId || '') ? operation.mobileShareId : null,
+      mobileShareRevision: Number.isInteger(operation.mobileShareRevision) && operation.mobileShareRevision > 0 ? operation.mobileShareRevision : null,
       targetGraphId: operation.targetGraphId || null, resultGraphId: operation.resultGraphId || null, jobId: operation.jobId || null, phase: operation.phase || 'draft', updatedAt: Date.now() };
     return transaction('readwrite', store => store.put(value));
   },

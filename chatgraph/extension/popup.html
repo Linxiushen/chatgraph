@@ -6,16 +6,23 @@
   <main>
     <p id="status" role="status">点击采集，预览当前页面已加载的对话。</p>
     <button id="capture" class="primary">采集当前对话</button>
+    <details id="workspace-settings">
+      <summary>连接自己的 ChatGraph 工作区</summary>
+      <label for="workspace">工作区地址</label>
+      <input id="workspace" type="url" value="http://127.0.0.1:4317" autocomplete="off" spellcheck="false" placeholder="https://graph.example.com">
+      <div class="actions"><button id="save-workspace">保存地址</button><button id="open-workspace">打开工作区</button></div>
+      <p class="help">手机上请填写可访问的 HTTPS 地址，并先打开工作区登录。127.0.0.1 只指当前设备。</p>
+    </details>
     <section id="result" hidden>
       <label for="title">对话标题</label><input id="title" maxlength="240">
       <p id="source"></p><ul id="warnings" class="notice"></ul>
       <div class="bar"><strong id="count"></strong><button id="select-all" class="text">全选</button></div>
       <div id="messages"></div>
       <div class="actions"><button id="copy">复制 JSON</button><button id="download">下载 JSON</button></div>
-      <button id="send" class="primary">发送到本机 ChatGraph</button>
-      <p class="help">发送后会打开本机导入预览，由你选择整理方式。地址：127.0.0.1:4317。</p>
+      <button id="send" class="primary">发送到 ChatGraph</button>
+      <p id="destination-notice" class="help"></p>
     </section>
-    <footer>仅在点击时读取当前标签页。扩展不读取登录凭证、不调用模型、不保存你的对话。</footer>
+    <footer>仅在点击时读取当前标签页。只保存工作区地址；不保存对话、不读取登录凭证、不调用模型。</footer>
   </main>
-  <script src="popup.js"></script>
+  <script src="destination.js"></script><script src="popup.js"></script>
 </body></html>

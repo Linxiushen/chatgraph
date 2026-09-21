@@ -1,7 +1,26 @@
 const $ = id => document.getElementById(id);
 let current;
 const selected = new Set();
+const { parseDestination, defaultOrigin } = globalThis.ChatGraphDestination;
+let workspaceEdited = false;
 function status(text, error = false) { $('status').textContent = text; $('status').dataset.error = String(error); }
+function destinationNotice() {
+  try { const target = parseDestination($('workspace').value); $('destination-notice').textContent = `将发送到 ${target.origin} 的导入预览。${target.local ? '手机请先配置 HTTPS 工作区。' : '请先在该工作区登录。'}`; }
+  catch (error) { $('destination-notice').textContent = error.message; }
+}
+async function saveDestination() {
+  const target = parseDestination($('workspace').value);
+  await chrome.storage?.local?.set({ workspaceOrigin: target.origin });
+  $('workspace').value = target.origin; destinationNotice(); return target;
+}
+$('workspace').addEventListener('input', () => { workspaceEdited = true; destinationNotice(); });
+destinationNotice();
+chrome.storage?.local?.get('workspaceOrigin').then(saved => {
+  if (workspaceEdited) return;
+  try { $('workspace').value = parseDestination(saved.workspaceOrigin || defaultOrigin).origin; }
+  catch { $('workspace').value = defaultOrigin; }
+  destinationNotice();
+}).catch(() => {});
 function updateCount() { $('count').textContent = `已选 ${selected.size} / ${current.messages.length} 条`; }
 function payload() {
   if (!current || !selected.size) throw new Error('请至少选择一条消息。');
@@ -35,6 +54,8 @@ async function action(button, fn) {
   try { await fn(); } catch (error) { status(error.message || '操作失败，请重试。', true); }
   finally { button.disabled = false; }
 }
+$('save-workspace').addEventListener('click', () => action($('save-workspace'), async () => { const target = await saveDestination(); status(`已保存工作区 ${target.origin}。`); }));
+$('open-workspace').addEventListener('click', () => action($('open-workspace'), async () => { const target = await saveDestination(); await chrome.tabs.create({ url: target.url, active: true }); }));
 $('capture').addEventListener('click', () => action($('capture'), async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('无法读取当前标签页。');
@@ -60,17 +81,23 @@ $('download').addEventListener('click', () => action($('download'), async () => 
 }));
 $('send').addEventListener('click', () => action($('send'), async () => {
   const capture = payload();
-  const granted = await chrome.permissions.request({ origins: ['http://127.0.0.1/*'] });
-  if (!granted) throw new Error('未授予本机页面访问权限。你仍可复制或下载 JSON 导入。');
+  const target = parseDestination($('workspace').value);
+  const granted = await chrome.permissions.request({ origins: [target.permission] });
+  if (!granted) throw new Error('未授予该工作区页面的访问权限。你仍可复制或下载 JSON 导入。');
+  await saveDestination();
   // Keep the popup alive until delivery: open in background, then activate after ACK.
-  const tab = await chrome.tabs.create({ url: 'http://127.0.0.1:4317/', active: false });
+  const tab = await chrome.tabs.create({ url: target.url, active: false });
   const started = Date.now();
-  while ((await chrome.tabs.get(tab.id)).status !== 'complete') {
-    if (Date.now() - started > 12000) throw new Error('本机页面未就绪。请先启动 ChatGraph，再复制或下载 JSON 导入。');
+  let ready;
+  while ((ready = await chrome.tabs.get(tab.id)).status !== 'complete') {
+    if (Date.now() - started > 12000) throw new Error('工作区页面未就绪。请检查地址和网络，再复制或下载 JSON 导入。');
     await new Promise(resolve => setTimeout(resolve, 150));
   }
+  if (!ready.url || new URL(ready.url).origin !== target.origin) throw new Error('工作区跳转到了其他地址，已停止发送。请核对工作区地址。');
   const requestId = crypto.randomUUID();
-  const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', args: [capture, requestId], func: (data, id) => new Promise(resolve => {
+  const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', args: [capture, requestId, target.origin], func: (data, id, expectedOrigin) => {
+    if (location.origin !== expectedOrigin) return false;
+    return new Promise(resolve => {
     const timer = setTimeout(() => { window.removeEventListener('message', receive); resolve(false); }, 7000);
     function receive(event) {
       if (event.source !== window || event.origin !== location.origin || event.data?.type !== 'chatgraph:import:ack' || event.data?.requestId !== id) return;
@@ -78,8 +105,8 @@ $('send').addEventListener('click', () => action($('send'), async () => {
     }
     window.addEventListener('message', receive);
     window.postMessage({ type: 'chatgraph:import', version: 1, requestId: id, capture: data }, location.origin);
-  }) });
-  if (!results[0]?.result) throw new Error('本机页面未确认收到。请启动最新版 ChatGraph，或复制 / 下载 JSON 导入。');
+  }); } });
+  if (!results[0]?.result) throw new Error('工作区未确认收到。请先打开工作区登录，并使用最新版 ChatGraph；也可以复制 / 下载 JSON 导入。');
   await chrome.tabs.update(tab.id, { active: true });
   status('已送到 ChatGraph 导入预览。');
 }));

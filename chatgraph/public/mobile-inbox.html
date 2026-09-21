@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#244d3f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ChatGraph">
+  <title>手机收件箱 · ChatGraph</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/mobile-inbox.css">
+  <script type="module" src="/mobile-inbox.js"></script>
+</head>
+<body>
+  <main class="mobile-shell">
+    <header class="mobile-header"><a class="brand" href="/mobile-inbox.html"><img src="/icons/icon-192.png" width="36" height="36" alt="">ChatGraph<span>.</span></a><a class="workspace-link" href="/">我的图谱 <span aria-hidden="true">↗</span></a></header>
+    <section class="intro"><p class="eyebrow">把思考，带在身边</p><h1>聊完了，<br>让思路留下来。</h1><p>接收一段 AI 对话，检查原文，再整理成属于你的知识图谱。</p><div class="intro-line"><span></span>手机收件箱 · 对话先保存在当前浏览器</div></section>
+    <p id="local-warning" class="notice" hidden>这是电脑上的本地预览地址。手机不能通过电脑的 localhost 访问；请先部署 HTTPS 工作区，再用手机打开同一个网址。</p>
+    <p id="offline-status" class="notice" hidden>当前离线。仍可保存文字或文件到手机收件箱，联网后再整理；已有图谱和 AI 功能需要连接工作区。</p>
+    <p id="page-status" class="notice" role="status" aria-live="polite" hidden></p>
+    <section class="entry-card">
+      <div class="section-heading"><div><p class="eyebrow">01 / 收下对话</p><h2>从这里开始沉淀</h2></div><button id="new-entry" class="text-button" type="button" hidden>新建一份</button></div>
+      <form id="mobile-import-form">
+        <label class="field-label" for="share-title">这次聊了什么 <span>可选</span></label><input id="share-title" name="title" type="text" maxlength="200" placeholder="例如：我的 AI 产品方向探索" autocomplete="off">
+        <div class="field-title"><label class="field-label" for="share-text">对话原文</label><button id="paste-text" class="text-button" type="button">粘贴剪贴板</button></div>
+        <textarea id="share-text" name="text" rows="7" spellcheck="false" placeholder="我：我想把 AI 聊天整理成知识。&#10;AI：你希望保留哪些内容？&#10;我：尤其是我的判断，以及它如何变化。"></textarea>
+        <div id="file-preview" class="file-preview" hidden><div><strong id="file-name"></strong><button id="clear-file" class="text-button" type="button">移除文件</button></div><small id="file-meta"></small><pre id="file-excerpt"></pre></div>
+        <div class="file-row"><label class="file-button" for="share-file">选择对话文件<input id="share-file" type="file" accept=".txt,.md,.markdown,.json,text/plain,text/markdown,application/json"></label><small>TXT / Markdown / JSON<br>一个文件，最多 25 MB</small></div>
+        <label class="field-label" for="share-url">原始对话链接 <span>可选，仅记录出处</span></label><input id="share-url" name="url" type="url" placeholder="https://…" autocomplete="off">
+        <p id="link-notice" class="notice link-notice" hidden>收到的是分享链接，还没有对话原文。请在原应用中复制聊天文字或导出文件，也可以先带着链接进入工作台补充内容。</p>
+        <p id="source-note" class="subtle-note">保留“我：”“AI：”等说话人标记，下一步可以检查和修正。仅有分享链接时，还需要补充原文。</p>
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+        <div class="form-actions"><button id="continue-import" class="primary" type="submit">检查并整理 <span aria-hidden="true">→</span></button><button id="save-inbox" class="secondary" type="button">先存到收件箱</button></div>
+        <p class="privacy-note">收件箱内容只暂存在这台设备的当前浏览器，24 小时后在下次访问时清理。整理成功后自动移除，也可随时手动删除。进入下一步不会立即调用 AI；开始整理后，选定文字才会发送至你的工作区和所选模型。</p>
+      </form>
+    </section>
+    <section id="queue-section" class="entry-card queue-section" hidden><div class="section-heading"><div><p class="eyebrow">留给稍后的自己</p><h2>待整理 <span id="queue-count"></span></h2></div></div><ul id="share-queue" class="share-queue"></ul><p class="subtle-note">最多保留 5 份、合计 50 MB。整份账号导出也只暂存在本机收件箱；下一步选择一个会话及范围。</p></section>
+    <section class="install-card"><div class="section-heading"><div><p class="eyebrow">02 / 下次，少一步</p><h2>把 ChatGraph 放到手机上</h2></div><button id="install-app" class="secondary" hidden type="button">安装到手机</button></div><p id="install-status" class="subtle-note">打开自己的 HTTPS 工作区，将它添加到主屏幕，就能像 App 一样启动。</p>
+      <div class="platform-tabs" role="tablist" aria-label="手机系统"><button id="ios-tab" role="tab" aria-selected="true" aria-controls="ios-guide" type="button">iPhone / iPad</button><button id="android-tab" role="tab" aria-selected="false" aria-controls="android-guide" tabindex="-1" type="button">Android</button></div>
+      <div id="ios-guide" class="platform-guide" role="tabpanel" aria-labelledby="ios-tab"><ol><li>用 Safari 打开这个工作区，点<strong>分享 → 添加到主屏幕</strong>。</li><li>在 AI App 里复制聊天文字，返回 ChatGraph 粘贴；或将导出文件保存到“文件”后选择导入。</li><li>在 Safari 使用 AI 网页时，按配置指南建立一次网页采集快捷指令，之后从分享菜单运行。</li></ol><a class="guide-link" href="/mobile-assets/safari-shortcut.js" download="chatgraph-safari-shortcut.js">下载 Safari 网页采集脚本 ↓</a><br><a class="guide-link" href="/mobile-assets/README.md" download="ChatGraph-手机采集配置指南.md">下载快捷指令配置指南 ↓</a><p class="subtle-note">iOS 主屏幕网页目前不提供 Android 式的系统分享接收入口。Safari 网页采集需要手动配置快捷指令，只能读取当前网页已加载的文字。</p></div>
+      <div id="android-guide" class="platform-guide" role="tabpanel" aria-labelledby="android-tab" hidden><ol><li>用支持安装网页应用的浏览器打开本页，选择<strong>安装应用 / 添加到主屏幕</strong>。</li><li>在支持的 Android 浏览器中，安装后可在其他应用的<strong>分享</strong>菜单选择 ChatGraph。</li><li>接收后先检查原文。如果原应用只分享了链接，需要再复制聊天文字或导出文件。</li></ol><p class="subtle-note">系统分享入口取决于浏览器及安装方式；没有出现时，直接打开收件箱粘贴或选文件。Android Chrome 不支持安装桌面 Chrome 扩展。</p></div>
+      <p class="boundary-note">ChatGraph 不会在后台读取其他手机 App 的聊天。每次导入都由你发起；完整性由原应用提供的文字、文件或网页已加载内容决定。</p>
+    </section>
+    <footer class="mobile-footer">对话会过去，思考可以留下。<a href="/">进入知识工作台 →</a></footer>
+  </main>
+</body>
+</html>

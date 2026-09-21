@@ -1,6 +1,7 @@
 import { descendantIds, reparentNode, reorderNode, removeNodes, timelineEvents } from './editor-model.js';
 import { draftStore } from './draft-store.js';
 import { inspectConversationFile, previewConversation } from './import-model.js';
+import { registerMobile, pendingMobileShareId, readMobileShare, removeMobileShare, clearPendingMobileShare } from './mobile.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -766,14 +767,15 @@ function openImport(options = {}) {
   const append = resumed ? Boolean(resumed.targetGraphId) : options.append === true;
   if (append && !state.graph) return;
   const captured = options.capture;
+  const mobile = options.mobile;
   let localSource = null, localCatalog = null, localPreview = null, roleOverrides = {}, conversationIndex, catalogQuery = '', selecting = false;
   let importCapture = captured?.capture || resumed?.input.capture;
-  let autoFilledTitle = '', sourceUrlEdited = false;
-  const operation = resumed || { operationId: crypto.randomUUID(), targetGraphId: append ? state.graph.id : null, input: {}, jobId: null, phase: 'draft', updatedAt: Date.now() };
+  let autoFilledTitle = '', sourceUrlEdited = Boolean(mobile?.url || resumed?.input.url);
+  const operation = resumed || { operationId: crypto.randomUUID(), mobileShareId: mobile?.id || null, mobileShareRevision: mobile?.revision || 1, targetGraphId: append ? state.graph.id : null, input: {}, jobId: null, phase: 'draft', updatedAt: Date.now() };
   const dialog = modal(append ? '继续这次思考' : '让这段对话，留下来', append ? '补充一段对话，保留已有观点与来源。' : '导入真实对话，整理你的判断、依据和下一步。', { wide: true, onClose: () => { localSource = localCatalog = localPreview = null; roleOverrides = {}; } });
-  const title = el('input', { value: resumed?.input.title || captured?.title || '', placeholder: append ? '例如：第二轮用户访谈后的反思' : '例如：我的 AI 产品方向探索', maxlength: 200 });
+  const title = el('input', { value: resumed?.input.title || captured?.title || mobile?.title || '', placeholder: append ? '例如：第二轮用户访谈后的反思' : '例如：我的 AI 产品方向探索', maxlength: 200 });
   const platform = selectInput({ ChatGPT: 'ChatGPT', DeepSeek: 'DeepSeek', Claude: 'Claude', Gemini: 'Gemini', 其他: '其他 / 手动输入' }, resumed?.input.platform || captured?.platform || 'ChatGPT', () => {});
-  const url = el('input', { type: 'url', value: resumed?.input.url || captured?.url || '', placeholder: 'https://…（可选，仅记录出处）' });
+  const url = el('input', { type: 'url', value: resumed?.input.url || captured?.url || mobile?.url || '', placeholder: 'https://…（可选，仅记录出处）' });
   const text = el('textarea', { value: resumed?.input.text || (captured ? JSON.stringify({ messages: captured.messages }, null, 2) : ''), placeholder: '我：我想做一个能保留 AI 对话思考过程的工具。\nAI：可以先尝试面向研究者和产品经理。\n我：我更倾向于先验证独立开发者，范围更小。', rows: 9, spellcheck: false, 'aria-label': '对话内容' });
   const modes = el('div', { class: 'import-modes' });
   const defaultMode = resumed?.input.mode || (state.config.aiConfigured || state.api.apiKey ? 'ai' : 'outline');
@@ -797,6 +799,7 @@ function openImport(options = {}) {
     finally { file.value = ''; if (dialog.container.isConnected) submit.disabled = selecting || state.importing; }
   });
   dialog.body.append(modes);
+  if (mobile) dialog.body.append(el('p', { class: 'notice mobile-import-notice', text: mobile.kind === 'link' ? '这次分享只有链接，没有对话原文。链接已记为出处，请粘贴原文或选择导出文件后再整理。' : '来自手机收件箱。请确认说话者和消息范围；点击“开始整理”后才发送选定内容。收件箱原件在此浏览器临时保留，成功整理后删除。' }));
   if (append && (state.graph.mode === 'demo' || state.graph.sessions?.some(session => session.mode === 'demo'))) dialog.body.append(el('p', { class: 'notice', text: '当前图谱包含演示数据。追加后这些示例观点会继续保留；也可以关闭此窗口，用“整理新的对话”建立独立图谱。' }));
   if (captured) dialog.body.append(el('p', { class: 'notice capture-notice', text: `来自浏览器的 ${captured.messages.length} 段对话。捕获范围是当前页面已加载的分支，完整性尚未确认，请先检查原文。${(captured.capture?.warnings || []).join(' ')}` }));
   dialog.body.append(field('这次思考的标题', title), field('对话内容', text), el('div', { class: 'upload-row' }, [el('label', { class: 'file-label' }, [icon('upload'), el('span', { text: '选择对话文件' }), file]), prepare, fileInfo]), previewPanel, el('div', { class: 'field-row' }, [field('对话来自', platform), field('原始对话链接', url)]), el('p', { class: 'modal-note', text: '可在本机打开 ChatGPT 账号导出，选择一个会话及连续范围，再开始整理。账号导出原文件仅临时保留在当前窗口；只有应用后的选定内容会保存为草稿，并在开始整理后发给服务端。AI 模式会将选定对话发送至配置的模型服务。' }));
@@ -1030,6 +1033,7 @@ function openImport(options = {}) {
       // Retain both the task receipt and graph draft until the result is saved.
       await draftStore.put(state.drafts.get(graph.id));
       operation.phase = 'completed'; operation.resultGraphId = graph.id; await retainImport(operation);
+      if (operation.mobileShareId) await removeMobileShare(operation.mobileShareId, operation.mobileShareRevision).catch(() => toast('图谱已生成，收件箱原件暂未清除，可回收件箱手动删除。', true));
       await saveGraphId(graph.id, { silent: true });
       if (!state.dirty) await clearImport(operation);
       state.importing = false; closeModal();
@@ -1042,7 +1046,7 @@ function openImport(options = {}) {
     }
   }, 'primary', 'sparkles');
   dialog.footer.append(cancel, submit); title.focus();
-
+  if (mobile?.text) prepareImport(mobile.text);
 }
 
 function openSettings() {
@@ -1381,4 +1385,15 @@ async function boot() {
   if (state.demo) setGraph(state.demo, { selected: chooseSelection(state.demo), saved: false });
   else { $('#graph-title').textContent = '暂时无法打开示例'; $('#graph-description').textContent = results[0].reason.message; $('#crumb-title').textContent = '加载失败'; $('#save-state').textContent = '服务连接异常'; $('#canvas-empty').textContent = '请确认本地服务可用后刷新页面，或尝试导入一段对话。'; $('#canvas-empty').hidden = false; toast(results[0].reason.message, true); renderLibrary(); }
 }
-boot();
+registerMobile().catch(() => { /* The online editor remains usable without installation. */ });
+boot().then(async () => {
+  const id = pendingMobileShareId();
+  if (!id) return;
+  try {
+    const mobile = await readMobileShare(id);
+    const existing = mobile && state.pendingImports.find(item => item.mobileShareId === id && item.mobileShareRevision === mobile.revision);
+    if (existing) return openImport({ resume: existing });
+    if (mobile) openImport({ mobile });
+    else { clearPendingMobileShare(id); toast('这条手机导入已处理或过期，请回到手机收件箱重新选择。'); }
+  } catch { toast('无法打开手机收件箱，请回到收件箱重试或直接选择对话文件。', true); }
+});

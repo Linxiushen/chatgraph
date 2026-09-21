@@ -20,7 +20,11 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, 'public');
 const version = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version;
 const MAX_BODY = 2 * 1024 * 1024;
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' };
+// Public installation and receiving screens contain no workspace data. Keep
+// this an exact allowlist: API access and the editor still require a session.
+const mobileAssets = new Set(['/manifest.webmanifest', '/service-worker.js', '/mobile.js', '/mobile-inbox.html', '/mobile-inbox.js', '/mobile-inbox.css', '/offline.html', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png']);
+const mobileDownloads = new Map([['/mobile-assets/safari-shortcut.js', 'safari-shortcut.js'], ['/mobile-assets/README.md', 'README.md']]);
 
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -101,7 +105,14 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
           'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(html);
       }
-      const loginAsset = ['/login', '/login.html', '/login.js'].includes(pathname);
+      if (req.method === 'POST' && pathname === '/mobile-share') return json(res, 405, { error: '分享入口尚未就绪。请先打开 ChatGraph 手机收件箱并安装到主屏幕，再重新分享；也可复制原文后粘贴。' });
+      if ((req.method === 'GET' || req.method === 'HEAD') && mobileDownloads.has(pathname)) {
+        const filename = mobileDownloads.get(pathname);
+        const body = await fs.readFile(path.join(root, 'mobile', filename));
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-cache', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'" });
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
+      const loginAsset = ['/login', '/login.html', '/login.js'].includes(pathname) || mobileAssets.has(pathname);
       if (!loginAsset && !access.authenticated(req)) {
         if (pathname.startsWith('/api/')) return json(res, 401, { error: '请先登录工作区。' });
         res.writeHead(302, { Location: '/login', 'Cache-Control': 'no-store' }); return res.end();
@@ -185,7 +196,7 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
       if (!actual.startsWith(`${publicDir}${path.sep}`)) return json(res, 404, { error: '文件不存在。' });
       const body = await fs.readFile(actual);
       res.writeHead(200, { 'Content-Type': types[path.extname(actual)] || 'application/octet-stream', 'Cache-Control': 'no-cache',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
+        'Content-Security-Policy': "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
       res.end(req.method === 'HEAD' ? undefined : body);
     } catch (error) {
       if (res.headersSent) return res.end();
