@@ -24,6 +24,7 @@ public final class MainActivity extends Activity {
     private static final int INK = Color.rgb(31, 49, 42), GREEN = Color.rgb(54, 95, 81), PAPER = Color.rgb(244, 245, 239);
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final WorkspaceTransition workspaceTransition = new WorkspaceTransition();
     private ShareStore store;
     private WebView web;
     private ValueCallback<Uri[]> chooser;
@@ -35,7 +36,12 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         store = new ShareStore(this);
-        workspace = getPreferences(MODE_PRIVATE).getString("workspace", "");
+        SharedPreferences preferences = getPreferences(MODE_PRIVATE);
+        String savedWorkspace = preferences.getString("workspace", null);
+        workspace = WorkspaceConfiguration.resolve(savedWorkspace, preferences.getBoolean("workspace_default_disabled", false), BuildConfig.DEFAULT_WORKSPACE_URL);
+        // Adopt the first default without clearing cookies, drafts or the native
+        // inbox. Persist it so a later release cannot silently switch servers.
+        if (savedWorkspace == null && !workspace.isEmpty()) preferences.edit().putString("workspace", workspace).apply();
         WebView.setWebContentsDebuggingEnabled(false);
         showHome(); if (saved == null || !saved.getBoolean("share_consumed", false)) receive(getIntent());
     }
@@ -65,18 +71,16 @@ public final class MainActivity extends Activity {
         body.addView(text("在其他 App 的分享菜单选择 ChatGraph，接收文字或一个 TXT / Markdown / JSON 文件。仅分享链接时，需要继续补充对话原文。", 14));
         if (!banner.isEmpty()) { TextView notice = text(banner, 14); notice.setTextColor(GREEN); body.addView(notice); }
         if (receiving) body.addView(text("正在安全保存到本机…", 14));
+        if (workspaceTransition.isActive()) body.addView(text("正在退出工作区登录，请稍候…", 14));
         body.addView(text("我的工作区", 21));
-        body.addView(text("填入你部署的 ChatGraph HTTPS 根地址。AI 生成由该工作区处理，首次打开可能需要登录。", 14));
-        EditText address = new EditText(this); address.setSingleLine(true); address.setHint("https://你的工作区域名"); address.setText(workspace); address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI); address.setTextSize(15); body.addView(address);
-        body.addView(button("保存工作区地址", () -> {
-            try {
-                String next = validateWorkspace(address.getText().toString());
-                if (!workspace.isEmpty() && !workspace.equals(next)) confirm("切换工作区", "将退出当前工作区，并清除 App 内网页的登录和存储。本机待导入内容会保留。", () -> saveWorkspace(next));
-                else saveWorkspace(next);
-            } catch (Exception error) { alert(error.getMessage()); }
-        }));
-        Button open = button("打开工作区", () -> openWorkspace("")); open.setEnabled(!workspace.isEmpty()); body.addView(open);
-        Button browser = button("在系统浏览器中打开（用于导出）", () -> external(Uri.parse(workspace + "/"))); browser.setEnabled(!workspace.isEmpty()); body.addView(browser);
+        if (!workspace.isEmpty()) {
+            body.addView(text("工作区已就绪。打开后登录，即可整理对话和查看知识图谱。", 14));
+            Button open = button("打开工作区", () -> openWorkspace("")); open.setEnabled(!workspaceTransition.isActive()); body.addView(open);
+            Button settings = button("更换工作区 / 设置", this::showWorkspaceSettings); settings.setEnabled(!workspaceTransition.isActive()); body.addView(settings);
+        } else {
+            body.addView(text("连接一个可访问的 ChatGraph 工作区，即可整理对话和查看图谱。本机已收到的内容会继续保留。", 14));
+            Button connect = button("连接工作区", this::showWorkspaceSettings); connect.setEnabled(!workspaceTransition.isActive()); body.addView(connect);
+        }
         body.addView(text("本机待导入", 21));
         List<JSONObject> items;
         boolean storageFailed = false;
@@ -88,7 +92,7 @@ public final class MainActivity extends Activity {
             String title = item.optString("title"); if (title.trim().isEmpty()) title = item.optString("fileName"); if (title.trim().isEmpty()) title = "一段待整理的对话";
             TextView heading = text(title, 17); heading.setMaxLines(3); body.addView(heading);
             body.addView(text(String.format(Locale.CHINA, "%s · %.1f KB · 仅存于本机", item.optString("fileName").isEmpty() ? "文字 / 链接" : "文件", item.optLong("bytes") / 1024.0), 13));
-            Button send = button("导入这份内容", () -> openWorkspace(id)); send.setEnabled(!workspace.isEmpty() && !receiving); body.addView(send);
+            Button send = button("导入这份内容", () -> openWorkspace(id)); send.setEnabled(!workspace.isEmpty() && !receiving && !workspaceTransition.isActive()); body.addView(send);
             Button remove = button("删除这份内容", () -> confirm("删除待导入内容", "这会从本机收件箱移除这份内容。", () -> {
                 try { store.remove(id); banner = "已删除。"; showHome(); } catch (Exception error) { alert("暂时无法删除，请重试。"); }
             })); remove.setEnabled(!receiving); body.addView(remove);
@@ -98,25 +102,65 @@ public final class MainActivity extends Activity {
             try { store.clear(); banner = "本机收件箱已清空。"; showHome(); }
             catch (IOException error) { alert("未能完整清空收件箱，请重试。"); }
         })); clear.setEnabled(!receiving && (!items.isEmpty() || storageFailed)); body.addView(clear);
-        body.addView(button("忘记工作区并退出登录", () -> confirm("忘记工作区", "清除地址、网页登录和网页存储。本机待导入内容仍保留。", () -> { clearWebStorage(); destroyWeb(); workspace = ""; getPreferences(MODE_PRIVATE).edit().remove("workspace").apply(); banner = "工作区设置已清除。"; showHome(); })));
-        body.addView(text("Android 测试版 0.4.2-beta.1 · 不包含云服务或 API 密钥", 12));
+        body.addView(text("Android 测试版 " + BuildConfig.VERSION_NAME + " · 不包含 API 密钥", 12));
         setContentView(scroll);
     }
     static String validateWorkspace(String value) throws Exception {
-        URI uri = new URI(value.trim());
-        String host = uri.getHost();
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null || !(uri.getPath().isEmpty() || uri.getPath().equals("/")) || uri.getPort() == 0 || uri.getPort() > 65535)
-            throw new IOException("请输入完整的 HTTPS 根地址，例如 https://graph.example.com；不要填写路径、密码或访问令牌。");
-        return new URI("https", null, host.toLowerCase(Locale.ROOT), uri.getPort() == 443 ? -1 : uri.getPort(), null, null, null).toASCIIString();
+        return WorkspaceConfiguration.validate(value);
+    }
+    private void showWorkspaceSettings() {
+        if (workspaceTransition.isActive()) return;
+        LinearLayout body = column(); body.setPadding(dp(22), dp(8), dp(22), dp(8));
+        body.addView(text("填写手机可访问的 HTTPS 根地址。登录密码只在工作区页面输入。", 14));
+        EditText address = new EditText(this); address.setSingleLine(true); address.setHint("HTTPS 工作区地址"); address.setText(workspace); address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI); address.setTextSize(15); body.addView(address);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(workspace.isEmpty() ? "连接工作区" : "更换工作区")
+                .setView(body).setPositiveButton("保存并打开", null).setNegativeButton("取消", null).create();
+        if (!workspace.isEmpty()) {
+            body.addView(button("在系统浏览器中打开（用于导出）", () -> { dialog.dismiss(); external(Uri.parse(workspace + "/")); }));
+            body.addView(button("忘记工作区并退出登录", () -> confirm("忘记工作区", "清除地址并退出网页登录。本机收件箱和网站已保存数据仍保留；下次启动不会自动连接预设工作区。", () -> {
+                dialog.dismiss(); forgetWorkspace();
+            })));
+        }
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            try {
+                String next = validateWorkspace(address.getText().toString());
+                Runnable save = () -> { dialog.dismiss(); saveWorkspace(next); };
+                if (!workspace.isEmpty() && !workspace.equals(next)) confirm("切换工作区", "将退出当前工作区的登录。本机收件箱和网站已保存数据会保留。", save);
+                else save.run();
+            } catch (Exception error) { address.setError(error.getMessage()); }
+        }));
+        dialog.show();
+    }
+    private void forgetWorkspace() {
+        long ticket = workspaceTransition.begin(() -> {
+            workspace = "";
+            getPreferences(MODE_PRIVATE).edit().remove("workspace").putBoolean("workspace_default_disabled", true).apply();
+        });
+        if (ticket == 0) return;
+        clearWebSession(ticket, () -> { banner = "已忘记工作区。你可以随时重新连接。"; showHome(); });
     }
     private void saveWorkspace(String next) {
-        if (!workspace.equals(next)) { clearWebStorage(); destroyWeb(); }
-        workspace = next; getPreferences(MODE_PRIVATE).edit().putString("workspace", workspace).apply(); banner = "工作区地址已保存。"; showHome();
+        if (workspaceTransition.isActive()) return;
+        Runnable commit = () -> {
+            workspace = next; getPreferences(MODE_PRIVATE).edit().putString("workspace", workspace).apply();
+            banner = "工作区地址已保存。"; showHome(); openWorkspace("");
+        };
+        if (workspace.equals(next)) { commit.run(); return; }
+        long ticket = workspaceTransition.begin(() -> {});
+        if (ticket != 0) clearWebSession(ticket, commit);
     }
-    private void clearWebStorage() {
-        CookieManager.getInstance().removeAllCookies(null); CookieManager.getInstance().flush(); WebStorage.getInstance().deleteAllData();
-        if (web != null) { web.clearCache(true); web.clearHistory(); }
+    private void clearWebSession(long ticket, Runnable complete) {
+        // IndexedDB may hold the only remaining copy of an acknowledged import.
+        // Forgetting a server must not silently erase those saved originals.
+        if (web != null) { web.stopLoading(); web.clearCache(true); web.clearHistory(); }
         else { WebView temporary = new WebView(this); temporary.clearCache(true); temporary.destroy(); }
+        // No live page may renew cookies or finish an import during logout.
+        handoffId = ""; handoffNonce = ""; handoffRunning = false;
+        destroyWeb(); showHome();
+        CookieManager.getInstance().removeAllCookies(ignored -> {
+            CookieManager.getInstance().flush();
+            if (!isFinishing() && !isDestroyed()) workspaceTransition.complete(ticket, complete);
+        });
     }
     private void receive(Intent intent) {
         if (intent == null || (!Intent.ACTION_SEND.equals(intent.getAction()) && !Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction()))) return;
@@ -182,6 +226,7 @@ public final class MainActivity extends Activity {
     }
     private boolean isInbox(String value) { return internal(value) && "/mobile-inbox.html".equals(Uri.parse(value).getPath()); }
     private void openWorkspace(String importId) {
+        if (workspaceTransition.isActive()) return;
         if (workspace.isEmpty()) { alert("请先保存 HTTPS 工作区地址。"); return; }
         boolean reuse = web != null && workspace.equals(webWorkspace);
         if (reuse) detachWeb(); else destroyWeb();
@@ -244,10 +289,10 @@ public final class MainActivity extends Activity {
             if (internal(url)) confirm("在浏览器下载", "下载将交给系统浏览器；浏览器可能要求重新登录。", () -> external(Uri.parse(url)));
             else alert("此导出使用浏览器内存文件。请在系统浏览器中打开工作区后导出，App 暂不直接保存 Blob 文件。");
         });
-        web.loadUrl(workspace + "/mobile-inbox.html");
+        web.loadUrl(workspace + (importId.isEmpty() ? "/" : "/mobile-inbox.html"));
     }
     private void transfer() {
-        if (web == null || !isInbox(web.getUrl()) || handoffId.isEmpty() || handoffRunning) return;
+        if (workspaceTransition.isActive() || web == null || !isInbox(web.getUrl()) || handoffId.isEmpty() || handoffRunning) return;
         handoffRunning = true;
         final String itemId = handoffId, nonce = UUID.randomUUID().toString(); handoffNonce = nonce;
         worker.execute(() -> {
@@ -287,6 +332,7 @@ public final class MainActivity extends Activity {
         if (!nonce.equals(handoffNonce)) return; handoffRunning = false; handoffNonce = ""; alert(message);
     }
     private void external(Uri uri) {
+        if (workspaceTransition.isActive()) return;
         if (!"https".equals(uri.getScheme()) || uri.getEncodedAuthority() == null || uri.getEncodedAuthority().contains("@")) return;
         try { startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)); }
         catch (ActivityNotFoundException error) { alert("未找到可打开链接的浏览器。"); }
@@ -311,5 +357,5 @@ public final class MainActivity extends Activity {
     }
     @Override public void onBackPressed() { if (webVisible && web != null && web.canGoBack()) web.goBack(); else if (webVisible && web != null) showHome(); else super.onBackPressed(); }
     @Override protected void onSaveInstanceState(Bundle outState) { outState.putBoolean("share_consumed", !receiving); super.onSaveInstanceState(outState); }
-    @Override protected void onDestroy() { handoffNonce = ""; destroyWeb(); worker.shutdown(); super.onDestroy(); }
+    @Override protected void onDestroy() { workspaceTransition.cancel(); handoffNonce = ""; destroyWeb(); worker.shutdown(); super.onDestroy(); }
 }

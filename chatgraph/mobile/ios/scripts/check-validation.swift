@@ -13,6 +13,38 @@ struct ValidationChecks {
             catch { checks += 1; return }
             throw ShareFailure("Expected invalid input rejection")
         }
+        try require(try WorkspaceConfiguration.validated(" HTTPS://GRAPH.EXAMPLE.COM:443/ \n").absoluteString == "https://graph.example.com", "workspace canonical HTTPS origin")
+        try require(try WorkspaceConfiguration.buildAuthority("https://graph.example.com:8443/") == "graph.example.com:8443", "safe build authority retains non-default port")
+        try require(try WorkspaceConfiguration.validated("https://[2001:db8::1]:8443").absoluteString == "https://[2001:db8::1]:8443", "valid IPv6 workspace")
+        for invalid in ["", "https://", "http://graph.example.com", "https://user:secret@graph.example.com",
+                        "https://graph.example.com/path", "https://graph.example.com//", "https://graph.example.com?x=1",
+                        "https://graph.example.com#secret", "https://graph.example.com:0", "https://graph.example.com:65536",
+                        "https://graph.example.com:99999999999999999999", "https://graph.example.com:",
+                        "https://graph.example.com:abc", "https://graph.example.com\\@evil.test", "https://gr aph.example.com",
+                        "https://graph.example.com\n.evil.test", "https://localhost", "https://127.0.0.1", "https://[::1]",
+                        "https://[abc]", "https://[1:2:3:4:5:6:7:8:9]", "https://graph..example.com",
+                        "https://graph%2eexample.com", "https://$(CHATGRAPH_DEFAULT_WORKSPACE_AUTHORITY)"] {
+            try rejects { _ = try WorkspaceConfiguration.validated(invalid) }
+        }
+        let preferenceDomain = "ChatGraphValidation.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: preferenceDomain)!
+        defer { preferences.removePersistentDomain(forName: preferenceDomain) }
+        let buildDefault = "https://default.example.com"
+        try require(WorkspaceConfiguration.effective(defaultURL: nil, preferences: preferences).isEmpty, "generic app has no invented workspace")
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: preferences) == buildDefault, "fresh install resolves configured default")
+        try require(WorkspaceConfiguration.effective(defaultURL: "https://updated-default.example.com", preferences: UserDefaults(suiteName: preferenceDomain)!) == buildDefault, "first default is pinned across restarts and app updates")
+        try WorkspaceConfiguration.save("https://MANUAL.example.com:443/", preferences: preferences)
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: preferences) == "https://manual.example.com", "manual preference takes precedence over build default")
+        try rejects { _ = try WorkspaceConfiguration.save("http://wrong.example.com", preferences: preferences) }
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: preferences) == "https://manual.example.com", "failed change preserves previous manual workspace")
+        WorkspaceConfiguration.forget(preferences: preferences)
+        try require(preferences.string(forKey: WorkspaceConfiguration.savedKey) == nil, "forget clears saved address")
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: UserDefaults(suiteName: preferenceDomain)!).isEmpty, "explicit opt-out survives preferences reload")
+        try require(WorkspaceConfiguration.effective(defaultURL: "https://new-default.example.com", preferences: preferences).isEmpty, "app update cannot resurrect forgotten default")
+        try WorkspaceConfiguration.save("https://reconnected.example.com", preferences: preferences)
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: preferences) == "https://reconnected.example.com", "manual reconnect works after opt-out")
+        preferences.set("invalid saved workspace", forKey: WorkspaceConfiguration.savedKey)
+        try require(WorkspaceConfiguration.effective(defaultURL: buildDefault, preferences: preferences).isEmpty, "invalid manual preference never silently selects another server")
         let original = "用户：你怎么看？\n助手：可以用图谱梳理。🧠"
         let record = try PendingShare(text: original).validated()
         try require(record.text == original, "Chinese and Unicode text retained")
@@ -39,6 +71,8 @@ struct ValidationChecks {
         try ShareStore.save(record, in: queue)
         let queued = try ShareStore.list(in: queue)
         try require(queued.count == 1 && queued[0].text == original, "native queue durable round trip")
+        WorkspaceConfiguration.forget(preferences: preferences)
+        try require(try ShareStore.list(in: queue).first?.text == original, "forgetting workspace leaves native original intact")
         var future = record
         future.createdAt = Date().timeIntervalSince1970 * 1000 + 60_000
         let receipt = queue.appendingPathComponent("\(record.id).json")

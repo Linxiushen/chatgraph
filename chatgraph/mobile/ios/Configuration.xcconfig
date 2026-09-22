@@ -2,9 +2,12 @@
 APP_BUNDLE_IDENTIFIER = com.chatgraph.mobile
 APP_GROUP_IDENTIFIER = group.$(APP_BUNDLE_IDENTIFIER)
 DEVELOPMENT_TEAM =
+// Optional host or host:port only; the plist supplies https:// safely.
+// Leave empty in generic builds. Never put credentials or an API key here.
+CHATGRAPH_DEFAULT_WORKSPACE_AUTHORITY =
 
-MARKETING_VERSION = 0.4.2
-CURRENT_PROJECT_VERSION = 6
+MARKETING_VERSION = 0.4.3
+CURRENT_PROJECT_VERSION = 7
 IPHONEOS_DEPLOYMENT_TARGET = 16.0
 SWIFT_VERSION = 5.0
 CODE_SIGN_STYLE = Automatic

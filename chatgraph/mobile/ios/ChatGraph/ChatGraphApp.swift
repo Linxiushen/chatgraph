@@ -17,20 +17,29 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if model.workspace.isEmpty {
+                if !model.showingWorkspace {
                     VStack(spacing: 20) {
                         Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 68)).foregroundStyle(.indigo)
                         Text("让对话成为知识").font(.largeTitle.bold())
-                        Text("连接你自己的 ChatGraph HTTPS 工作区，然后从其他 App 分享文字、链接或对话文件到这里。")
+                        Text(model.workspace.isEmpty
+                            ? "从其他 App 分享文字、链接或对话文件到这里。连接工作区后，把对话整理成知识图谱。"
+                            : "工作区已就绪。打开后登录，再选择要整理的对话。")
                             .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                        Button("连接工作区") { settings = true }.buttonStyle(.borderedProminent)
+                        if model.workspace.isEmpty {
+                            Button("连接工作区") { settings = true }.buttonStyle(.borderedProminent).disabled(model.busy)
+                        } else {
+                            Text(model.workspace).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                            Button("打开工作区") { model.openWorkspace() }.buttonStyle(.borderedProminent).disabled(model.busy)
+                            Button("更换工作区") { settings = true }.disabled(model.busy)
+                        }
+                        if model.resettingWorkspace { ProgressView("正在退出登录…") }
                         Text("分享入口只能接收你主动分享的内容。只有链接时，仍需补充对话原文。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }.padding(28)
                     Spacer()
                 } else {
                     if model.loading { ProgressView().frame(maxWidth: .infinity).padding(6) }
-                    WorkspaceWebView(model: model)
+                    WorkspaceWebView(model: model).id(ObjectIdentifier(model.webView))
                 }
                 if !model.status.isEmpty {
                     Text(model.status).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
@@ -47,11 +56,19 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
+                        Button { model.showHome() } label: { Label("返回首页", systemImage: "house") }
+                            .disabled(model.busy || !model.showingWorkspace)
+                        Button { model.openWorkspace() } label: { Label("打开工作区", systemImage: "arrow.up.right.square") }
+                            .disabled(model.busy || model.workspace.isEmpty)
                         Button { model.openInSafari() } label: { Label("在 Safari 打开（用于导出）", systemImage: "safari") }
+                            .disabled(model.busy || model.workspace.isEmpty)
                         Button { model.openInbox() } label: { Label("工作区收件箱", systemImage: "tray") }
+                            .disabled(model.busy || model.workspace.isEmpty)
                         Button { filePicker = true } label: { Label("导入对话文件", systemImage: "doc.badge.plus") }
-                        Button { model.webView.reload() } label: { Label("刷新页面", systemImage: "arrow.clockwise") }
-                        Button { settings = true } label: { Label("工作区设置", systemImage: "gearshape") }
+                        Button { model.reloadWorkspace() } label: { Label("刷新页面", systemImage: "arrow.clockwise") }
+                            .disabled(model.busy || !model.showingWorkspace)
+                        Button { settings = true } label: { Label("更换工作区", systemImage: "gearshape") }
+                            .disabled(model.busy)
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
@@ -75,13 +92,14 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var error = ""
     @State private var clearConfirmation = false
+    @State private var forgetConfirmation = false
     var body: some View {
         NavigationStack {
             Form {
                 Section("HTTPS 工作区") {
                     TextField("https://graph.example.com", text: $address).keyboardType(.URL)
                         .textContentType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("填写你部署的 ChatGraph 根地址（0.4.1 或以上）。手机不能连接电脑的 127.0.0.1。登录密码只在工作区页面填写。")
+                    Text("填写手机可访问的 ChatGraph 根地址（0.4.1 或以上）。安装包可预设工作区；你手动保存的地址优先。手机不能连接电脑的 127.0.0.1。登录密码只在工作区页面填写。")
                         .font(.footnote)
                 }
                 Section("收件与隐私") {
@@ -93,15 +111,27 @@ struct SettingsView: View {
                 Button("保存并连接") {
                     do { try model.configure(address); dismiss() }
                     catch { self.error = error.localizedDescription }
-                }.disabled(model.transferring)
-                Button("清空本机待导入内容", role: .destructive) { clearConfirmation = true }.disabled(model.transferring)
-            }.navigationTitle("工作区设置")
+                }.disabled(model.busy)
+                if !model.workspace.isEmpty {
+                    Button("忘记工作区并退出登录", role: .destructive) { forgetConfirmation = true }.disabled(model.busy)
+                }
+                Button("清空本机待导入内容", role: .destructive) { clearConfirmation = true }.disabled(model.busy)
+            }.navigationTitle("更换工作区")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
                 .onAppear { address = model.workspace }
                 .confirmationDialog("清空本机收件箱？", isPresented: $clearConfirmation, titleVisibility: .visible) {
                     Button("删除全部本机待导入内容", role: .destructive) { model.clearPending() }
                     Button("取消", role: .cancel) {}
                 } message: { Text("这会删除尚未导入的原件，包括暂时无法读取的记录。已保存在工作区的图谱不受影响。") }
+                .confirmationDialog("忘记工作区并退出登录？", isPresented: $forgetConfirmation, titleVisibility: .visible) {
+                    Button("忘记地址并退出登录", role: .destructive) {
+                        Task { await model.forgetWorkspace(); dismiss() }
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("清除工作区地址、App 内网站登录、缓存和浏览历史。本机收件箱与网站已保存内容保留，服务器上的图谱不受影响。下次启动不会恢复预设地址；可手动重新连接。Safari 登录不受影响。")
+                }
+                .interactiveDismissDisabled(model.busy)
         }
     }
 }
@@ -115,6 +145,9 @@ struct NativeInboxView: View {
                 Section {
                     Text("先登录工作区，再导入。内容会进入工作区预览；不会自动调用 AI。链接无法代替对话原文。")
                         .font(.footnote).foregroundStyle(.secondary)
+                    if !model.workspace.isEmpty && !model.showingWorkspace {
+                        Button("先打开工作区登录") { model.openWorkspace(); dismiss() }.disabled(model.busy)
+                    }
                 }
                 if model.pending.isEmpty { Text("暂无待整理内容。请从其他 App 分享文字或文件到 ChatGraph。") }
                 ForEach(model.pending) { item in
@@ -122,14 +155,14 @@ struct NativeInboxView: View {
                         Text(item.preview).font(.footnote).lineLimit(10).textSelection(.enabled)
                         Text("\(item.bytes / 1024) KB · 本机暂存 24 小时").font(.caption).foregroundStyle(.secondary)
                         Button("导入当前工作区") { Task { if await model.transfer(item) { dismiss() } } }
-                            .disabled(model.transferring || model.workspace.isEmpty)
-                        Button("删除本机副本", role: .destructive) { model.remove(item) }.disabled(model.transferring)
+                            .disabled(model.busy || model.workspace.isEmpty || !model.showingWorkspace || model.loading)
+                        Button("删除本机副本", role: .destructive) { model.remove(item) }.disabled(model.busy)
                     }
                 }
                 if !model.status.isEmpty { Text(model.status).font(.footnote) }
             }.navigationTitle("本机收件箱")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.disabled(model.transferring) } }
-                .interactiveDismissDisabled(model.transferring)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.disabled(model.busy) } }
+                .interactiveDismissDisabled(model.busy)
         }
     }
 }

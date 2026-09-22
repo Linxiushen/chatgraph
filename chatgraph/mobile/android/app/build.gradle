@@ -1,5 +1,23 @@
 plugins { id 'com.android.application' }
 
+// Public origin only: never place a password, token or model key in BuildConfig.
+def workspaceUrl = providers.gradleProperty('chatgraphDefaultWorkspaceUrl')
+        .orElse(providers.environmentVariable('CHATGRAPH_DEFAULT_WORKSPACE_URL')).getOrElse('').trim()
+if (workspaceUrl) {
+    try {
+        def uri = new URI(workspaceUrl)
+        def host = uri.host?.toLowerCase(Locale.ROOT)
+        if (workspaceUrl.length() > 2048 || !'https'.equalsIgnoreCase(uri.scheme) || !host || uri.rawUserInfo != null
+                || uri.rawQuery != null || uri.rawFragment != null || !(uri.rawPath in ['', '/'])
+                || uri.port == 0 || uri.port > 65535 || uri.rawAuthority.endsWith(':')
+                || host in ['localhost', 'localhost.', '[::1]', '[0:0:0:0:0:0:0:1]'] || host.startsWith('127.'))
+            throw new IllegalArgumentException()
+        workspaceUrl = new URI('https', null, host, uri.port == 443 ? -1 : uri.port, null, null, null).toASCIIString()
+    } catch (Exception ignored) {
+        throw new GradleException('CHATGRAPH_DEFAULT_WORKSPACE_URL must be an HTTPS root without credentials, path, query or fragment; localhost is not a mobile server.')
+    }
+}
+
 android {
     namespace 'app.chatgraph.mobile'
     compileSdk 35
@@ -8,9 +26,11 @@ android {
         applicationId 'app.chatgraph.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 4002
-        versionName '0.4.2-beta.1'
+        versionCode 4003
+        versionName '0.4.3-beta.1'
+        buildConfigField 'String', 'DEFAULT_WORKSPACE_URL', groovy.json.JsonOutput.toJson(workspaceUrl)
     }
+    buildFeatures { buildConfig true }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

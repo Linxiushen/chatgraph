@@ -1,4 +1,20 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
+
+function canonicalIP(value) {
+  if (typeof value !== 'string' || value.includes('%')) return null;
+  const address = value.trim();
+  if (isIP(address) === 4) return address;
+  if (isIP(address) !== 6) return null;
+  return new URL(`http://[${address}]/`).hostname.slice(1, -1);
+}
+
+function isLoopback(value) {
+  const address = canonicalIP(value);
+  if (!address) return false;
+  if (isIP(address) === 4) return address.startsWith('127.');
+  return address === '::1' || /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(address);
+}
 
 /** Optional single-owner hosted workspace, behind a TLS reverse proxy. */
 export function createAccessControl(env) {
@@ -19,6 +35,15 @@ export function createAccessControl(env) {
       return hosted ? host === new URL(origin).host : [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host);
     },
     validOrigin(value, host) { return !value || value === (hosted ? origin : `http://${host}`); },
+    loginAddress(req) {
+      const peer = req.socket?.remoteAddress || 'unknown';
+      // This opt-in is for a local cloudflared ingress, which overwrites this
+      // header at the Cloudflare edge. Never infer trust from a forwarded header.
+      if (env.CHATGRAPH_TRUST_PROXY === 'loopback-cloudflare' && isLoopback(peer)) {
+        return canonicalIP(req.headers['cf-connecting-ip']) || peer;
+      }
+      return peer;
+    },
     authenticated(req) {
       if (!hosted) return true;
       const id = req.headers.cookie?.match(/(?:^|;\s*)chatgraph_session=([a-f0-9]{64})(?:;|$)/)?.[1];

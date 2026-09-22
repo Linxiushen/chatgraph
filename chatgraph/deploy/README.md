@@ -24,6 +24,8 @@ docker compose --env-file /secure/chatgraph-deploy.env -f chatgraph/deploy/compo
 
 工作区登录使用 Secure、HttpOnly、SameSite=Strict 会话 Cookie；会话保留一天，服务重启后需重新登录。失败登录受到限流保护。服务检查配置的 Host 和 Origin，不信任任意转发头。反向代理须保留公开 Host。单进程服务串行写入文件，不要把多个应用副本同时指向同一数据卷。
 
+若使用本机 `cloudflared` 提供 Cloudflare Tunnel 入口，可以显式设置 `CHATGRAPH_TRUST_PROXY=loopback-cloudflare`，让登录限流按 Cloudflare 提供的真实客户端 IP 计算，避免多个访客共用隧道地址而互相锁定。此选项只在连接服务的 TCP 对端是 loopback 时读取合法、单个 `CF-Connecting-IP`；缺失或非法时退回 socket 地址。默认不信任此头，也不读取 `X-Forwarded-For`。只应在服务绑定 loopback、入口确实来自受控本机 Cloudflare Tunnel 时启用；不要套用于可直连的普通代理或容器网络对端。它不改变 Host、Origin 或工作区密码校验。
+
 ## 数据与分享
 
 `chatgraph_data` 保存图谱、历史、任务结果和分享快照。升级前备份整个数据卷。网页里的 JSON 备份用于迁移当前图谱，不包括历史快照。模型任务被进程重启打断时显示失败，重新提交前可恢复原文草稿，服务不会自动重复收费请求。

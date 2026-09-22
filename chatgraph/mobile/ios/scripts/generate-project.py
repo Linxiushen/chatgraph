@@ -31,6 +31,7 @@ common_info = {
 }
 plist("ChatGraph/Info.plist", {
     **common_info, "CFBundlePackageType": "APPL", "LSRequiresIPhoneOS": True,
+    "ChatGraphDefaultWorkspaceURL": "https://$(CHATGRAPH_DEFAULT_WORKSPACE_AUTHORITY)",
     "UILaunchScreen": {},
     "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     "UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationPortraitUpsideDown", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
@@ -57,7 +58,7 @@ plist("Shared/PrivacyInfo.xcprivacy", {
 })
 plist("ExportOptions.template.plist", {"method": "app-store-connect", "signingStyle": "automatic", "teamID": "REPLACE_WITH_TEAM_ID", "uploadSymbols": True})
 
-app_sources = ["ChatGraph/ChatGraphApp.swift", "ChatGraph/WorkspaceModel.swift", "Shared/PendingShare.swift"]
+app_sources = ["ChatGraph/ChatGraphApp.swift", "ChatGraph/WorkspaceModel.swift", "Shared/PendingShare.swift", "Shared/WorkspaceConfiguration.swift"]
 extension_sources = ["ChatGraphShare/ShareViewController.swift", "Shared/PendingShare.swift"]
 paths = list(dict.fromkeys(app_sources + extension_sources + ["ChatGraph/Assets.xcassets", "Shared/PrivacyInfo.xcprivacy", "ChatGraph/Info.plist", "ChatGraphShare/Info.plist", "Shared/AppGroups.entitlements", "Configuration.xcconfig"]))
 file_refs = {}

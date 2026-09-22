@@ -5,6 +5,12 @@ on:
   pull_request:
     paths: ['chatgraph/mobile/android/**', 'chatgraph/mobile/ios/**', '.github/workflows/chatgraph-native.yml']
   workflow_dispatch:
+    inputs:
+      default_workspace_url:
+        description: 'Optional verified HTTPS workspace root; leave empty for a generic build. No passwords or tokens.'
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -25,6 +31,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile test APK and run Android lint
         working-directory: chatgraph/mobile/android
+        env:
+          CHATGRAPH_DEFAULT_WORKSPACE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.default_workspace_url || '' }}
         run: bash ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
       - name: Verify APK signature and package
         run: |
@@ -44,18 +52,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate native inputs and Xcode source metadata
         run: bash chatgraph/mobile/ios/scripts/check-source.sh
-      - name: Compile iPhone app and share extension without distribution signing
+      - name: Compile and package iPhone app and share extension without distribution signing
         working-directory: chatgraph/mobile/ios
-        run: xcodebuild -project ChatGraph.xcodeproj -scheme ChatGraph -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-      - name: Package unsigned iOS binary
-        working-directory: chatgraph/mobile/ios
-        run: |
-          mkdir -p native-artifacts/Payload
-          cp -R build/Build/Products/Release-iphoneos/ChatGraph.app native-artifacts/Payload/ChatGraph.app
-          cd native-artifacts
-          /usr/bin/zip -qry ChatGraph-iOS-unsigned.ipa Payload
+        env:
+          CHATGRAPH_DEFAULT_WORKSPACE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.default_workspace_url || '' }}
+        run: bash scripts/build.sh unsigned
       - uses: actions/upload-artifact@v4
         with:
           name: chatgraph-ios-unsigned
-          path: chatgraph/mobile/ios/native-artifacts/ChatGraph-iOS-unsigned.ipa
+          path: chatgraph/mobile/ios/build/ChatGraph-unsigned.ipa
           retention-days: 14

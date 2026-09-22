@@ -105,7 +105,7 @@ export function createAppServer({ dataDir = process.env.CHATGRAPH_DATA_DIR || pa
       if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true });
       if (req.method === 'POST' && pathname === '/api/login') {
         const { password } = await readJSON(req, 2048);
-        const cookie = access.login(password, req.socket.remoteAddress);
+        const cookie = access.login(password, access.loginAddress(req));
         if (cookie) res.setHeader('Set-Cookie', cookie);
         return json(res, 200, { ok: true });
       }

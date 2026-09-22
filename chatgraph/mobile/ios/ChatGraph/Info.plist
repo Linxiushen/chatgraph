@@ -22,6 +22,8 @@
 	<string>APPL</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>ChatGraphDefaultWorkspaceURL</key>
+	<string>https://$(CHATGRAPH_DEFAULT_WORKSPACE_AUTHORITY)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

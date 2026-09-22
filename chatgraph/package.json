@@ -1,6 +1,6 @@
 {
   "name": "chatgraph",
-  "version": "0.4.2-beta.1",
+  "version": "0.4.3-beta.1",
   "private": true,
   "description": "Turn AI conversations into editable, source-linked knowledge maps",
   "type": "module",

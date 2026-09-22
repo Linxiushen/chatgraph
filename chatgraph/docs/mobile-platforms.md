@@ -2,7 +2,7 @@
 
 ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合系统分享、粘贴、文件导入和 Safari 快捷指令。打开 ChatGraph 不会自动获得其他 AI App 的聊天记录。手机系统允许接收用户主动交出的内容；浏览器采集需要用户在相应网页中运行。
 
-0.4.2 提供 Android 原生 App 和 iOS 主 App / 分享扩展。Android 独立压缩包附测试签名 APK，iOS 包附未签名 IPA 与 Xcode 工程；iOS 安装需要配置自己的 Apple 签名和 App Group。首次启动均需填写已部署的 HTTPS 工作区。详见 [Android](../mobile/android/README.md) 与 [iOS](../mobile/ios/README.md)；以下 PWA 接入方式仍然保留。
+0.4.3 提供 Android 原生 App 和 iOS 主 App / 分享扩展。Android 提供测试签名 APK，iOS 提供未签名 IPA 与 Xcode 工程；iOS 安装需要配置自己的 Apple 签名和 App Group。已预置工作区的安装包，首页直接点“打开工作区”；未预置的开源构建仍可手动连接已部署的 HTTPS 工作区。详见 [Android](../mobile/android/README.md) 与 [iOS](../mobile/ios/README.md)；以下 PWA 接入方式仍然保留。
 
 ## 本轮交付与平台边界
 
@@ -13,12 +13,20 @@ ChatGraph 的手机入口是可添加到主屏幕的 Web App（PWA），配合�
 | 系统分享至 ChatGraph | 分享方实际提供的标题、文本、链接或支持的文件 | 支持 Web Share Target 的 Android 浏览器；先安装 PWA，系统面板是否出现以设备为准 |
 | Safari 快捷指令采集 | 当前 Safari 页面已渲染的对话；角色无法识别时标为未知 | iPhone / iPad；启用脚本、配置快捷指令后从 Safari 分享菜单运行 |
 | Safari Web Extension | 获准访问的 Safari 网页内容 | 原理可行；需打包、兼容性验证、用户安装授权及真机测试，本仓库不附已签名 iOS 安装包 |
-| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的文字或单个文件 | 0.4.2 提供测试签名 APK，需自行安装、配置工作区并真机验证 |
-| iOS 原生分享扩展 | 宿主主动提供的文本、链接或单个文件，先保存到 App Group | 0.4.2 提供未签名 IPA / Xcode 工程，需开发者签名和 App Group 能力后真机安装 |
+| Android 原生分享接收器 | 其他 App 通过 `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 主动分享的文字或单个文件 | 0.4.3 提供测试签名 APK；可预置工作区，也可手动连接，仍需真机验证 |
+| iOS 原生分享扩展 | 宿主主动提供的文本、链接或单个文件，先保存到 App Group | 0.4.3 提供未签名 IPA / Xcode 工程；可预置工作区，需开发者签名和 App Group 能力后真机安装 |
 
 桌面 Chrome 扩展不能当成 Android Chrome 扩展安装。Google 的“在手机上安装扩展”帮助实际指 **Add to Desktop**，最后在电脑 Chrome 使用。其他 Android 浏览器的扩展支持各不相同，本轮不据此声称已经适配。
 
-iPhone 的“添加到主屏幕”不等于注册了系统分享接收器。核对当日的 MDN 兼容性数据中，Safari / iOS Safari 不支持 `share_target`，Android Chrome 从 76 起支持。iPhone 当前应使用收件箱粘贴/文件，或 Safari 快捷指令。
+iPhone 的“添加到主屏幕”不等于注册了系统分享接收器。核对当日的 MDN 兼容性数据中，Safari / iOS Safari 不支持 `share_target`，Android Chrome 从 76 起支持。iPhone 的 PWA 当前应使用收件箱粘贴/文件，或 Safari 快捷指令。
+
+## 原生 App 首次连接
+
+有预设入口时，首页点“打开工作区”，再按页面要求登录。没有预设时，点“连接工作区”，填写部署者提供的真实 HTTPS 根地址；不要填写示例域名、路径、密码或模型 Key。安装包和任何 ZIP 不会自动提供或部署一个可用服务器，预设地址所指向的服务也需要部署者运行维护。
+
+已有工作区地址优先于安装包预设值；第一次采用默认值后会将其保存，升级不会静默换服务器。“更换工作区”可以改地址；“忘记工作区并退出登录”会记住该选择，下次不会自动恢复预设地址。忘记仅清理 App 内网站登录、缓存和历史，保留原生收件箱及网站 IndexedDB / localStorage 已保存的原文。打开 App 不会自动上传分享内容或调用 AI。
+
+已经安装 0.4.2 的 Android 用户，可直接在现有 App 中保存可用工作区地址，无需为了连接服务器重装。不同 debug 签名可能阻止覆盖安装；不要因此直接卸载导致本机原文丢失。
 
 ## iPhone 使用
 
@@ -68,6 +76,8 @@ Android 的分享 Intent 也只是接收主动分享的数据。无障碍读取�
 移动浏览器自动化覆盖手机尺寸的收件、预览和整理流程；这类测试不等价于在真实 iPhone / Android 上从系统分享面板启动应用。真实 AI 网页 DOM 变化、系统安装提示、系统分享文件类型和 Safari 快捷指令弹窗仍需要设备验证。
 
 0.4.2 的原生验证增加 JVM 临时目录队列回归和 Swift/Foundation 文件系统检查，覆盖中断写入恢复、旧版本备份、并发容量、重复分享、损坏记录保留及时间边界。Android debug 构建使用测试签名，CI 不同构建的签名可能不同，不能保证覆盖升级；必须先完成整理或导出，再考虑卸载。正式 Android 发行签名、Apple 团队签名及真实设备验收仍需要维护者环境。
+
+0.4.3 增加默认入口、手动选择优先、遗忘后不自动恢复、HTTPS 根地址校验及构建参数校验。Android / iOS 构建脚本都接受 `CHATGRAPH_DEFAULT_WORKSPACE_URL`；普通 push / pull request 的 CI 构建保持空地址。手动运行 `ChatGraph Native Apps` 工作流时，可选填 `default_workspace_url`，经环境变量传给构建脚本；必须先验证地址可访问、能登录，且 `GET /api/health` 返回 `ok: true`。不在源码或通用发布包中写入个人临时隧道 URL，不把登录密码或 API Key 传入该参数。iOS CI 使用 `scripts/build.sh unsigned` 输出 `build/ChatGraph-unsigned.ipa`，仍为未签名产物。
 
 0.4.0 开发时，本机只有 Apple Command Line Tools，没有完整 Xcode 或 Android 工具链。0.4.1 已补齐隔离的 JDK 17、Android SDK 35 和 Gradle 8.9，并在本机及 CI 编译、lint 和验证测试 APK；iOS 使用 GitHub macOS Xcode 编译了主 App 与分享扩展，产出未签名 IPA。仍未进行真实手机验收、Apple 分发签名或商店审核。Apple 另提供 App Store Connect 的 Safari Web Extension Packager，可通过网页上传浏览器扩展并生成 iOS/macOS App；该路径仍需开发者账号、兼容性检查、TestFlight 和审核。
 

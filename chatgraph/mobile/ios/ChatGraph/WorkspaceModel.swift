@@ -4,52 +4,78 @@ import WebKit
 
 @MainActor
 final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
-    @Published var workspace: String = UserDefaults.standard.string(forKey: "ChatGraphWorkspace") ?? ""
+    @Published private(set) var workspace = WorkspaceConfiguration.effective(
+        defaultURL: Bundle.main.object(forInfoDictionaryKey: "ChatGraphDefaultWorkspaceURL") as? String,
+        preferences: .standard)
+    @Published private(set) var showingWorkspace = false
+    @Published private(set) var resettingWorkspace = false
     @Published var status = ""
     @Published var loading = false
     @Published var transferring = false
     @Published var pending: [PendingShare] = []
-    let webView: WKWebView
+    @Published private(set) var webView: WKWebView
+    var busy: Bool { transferring || resettingWorkspace }
+    private var hasLoadedWorkspacePage = false
 
     override init() {
+        webView = Self.makeWebView()
+        super.init()
+        attachWebView()
+        refreshPending()
+    }
+
+    private static func makeWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
-        webView = WKWebView(frame: .zero, configuration: configuration)
-        super.init()
+        return WKWebView(frame: .zero, configuration: configuration)
+    }
+
+    private func attachWebView() {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.keyboardDismissMode = .interactive
-        refreshPending()
-        if !workspace.isEmpty { openInbox() }
     }
 
     static func validatedWorkspace(_ raw: String) throws -> URL {
-        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              url.path.isEmpty || url.path == "/" else {
-            throw ShareFailure("填写 HTTPS 工作区根地址，例如 https://graph.example.com；不要包含路径、密码或查询参数。")
-        }
-        guard !["localhost", "127.0.0.1", "::1"].contains(host.lowercased()) else {
-            throw ShareFailure("手机的 localhost 是手机自身。请填写手机能访问的 HTTPS 工作区。")
-        }
-        guard var canonical = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            throw ShareFailure("工作区地址无效。")
-        }
-        canonical.scheme = "https"
-        canonical.host = host.lowercased()
-        canonical.path = ""
-        if canonical.port == 443 { canonical.port = nil }
-        guard let result = canonical.url else { throw ShareFailure("工作区地址无效。") }
-        return result
+        try WorkspaceConfiguration.validated(raw)
     }
 
     func configure(_ raw: String) throws {
-        let url = try Self.validatedWorkspace(raw)
-        workspace = url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        UserDefaults.standard.set(workspace, forKey: "ChatGraphWorkspace")
-        openInbox()
+        guard !busy else { throw ShareFailure("正在导入或退出工作区，请完成后重试。") }
+        workspace = try WorkspaceConfiguration.save(raw, preferences: .standard)
+        openWorkspace()
+    }
+
+    func forgetWorkspace() async {
+        guard !busy else { return }
+        resettingWorkspace = true
+        showingWorkspace = false
+        loading = false
+        hasLoadedWorkspacePage = false
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        let websiteDataStore = webView.configuration.websiteDataStore
+        webView.loadHTMLString("", baseURL: nil)
+        // Detach the active page before clearing login data, so it cannot keep
+        // navigating while the asynchronous website-store operation is running.
+        webView = Self.makeWebView()
+        WorkspaceConfiguration.forget(preferences: .standard)
+        workspace = ""
+        // Keep IndexedDB/localStorage: their inbox may hold the only remaining
+        // original after a successful native transfer. Cookie removal logs out.
+        let disposableTypes: Set<String> = [WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
+                                            WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeOfflineWebApplicationCache]
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            websiteDataStore.removeData(ofTypes: disposableTypes, modifiedSince: .distantPast) {
+                continuation.resume()
+            }
+        }
+        // The fresh view also has no back/forward history or active page scripts.
+        attachWebView()
+        status = "已忘记地址并退出登录。本机收件箱与网站已保存内容保留；默认工作区不会自动恢复。"
+        resettingWorkspace = false
     }
 
     private func sameWorkspace(_ url: URL) -> Bool {
@@ -59,10 +85,23 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     }
 
     func openInbox() {
-        guard let root = try? Self.validatedWorkspace(workspace) else { return }
+        guard !busy, let root = try? Self.validatedWorkspace(workspace) else { return }
         status = ""
+        showingWorkspace = true
         webView.load(URLRequest(url: root.appendingPathComponent("mobile-inbox.html")))
     }
+
+    func openWorkspace() {
+        guard !busy, let root = try? Self.validatedWorkspace(workspace) else { return }
+        status = ""
+        showingWorkspace = true
+        if let page = webView.url, sameWorkspace(page), loading || hasLoadedWorkspacePage { return }
+        webView.load(URLRequest(url: root))
+    }
+
+    func showHome() { if !busy { showingWorkspace = false } }
+
+    func reloadWorkspace() { if !busy && showingWorkspace { webView.reload() } }
 
     func refreshPending() {
         do { pending = try ShareStore.list() }
@@ -75,26 +114,27 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     }
 
     func remove(_ item: PendingShare) {
+        guard !busy else { return }
         do { try ShareStore.remove(item.id); refreshPending() }
         catch { status = error.localizedDescription }
     }
 
     func clearPending() {
-        guard !transferring else { return }
+        guard !busy else { return }
         do { try ShareStore.clear(); refreshPending(); status = "已按你的选择清空本机收件箱。" }
         catch { status = "未能完整清空收件箱，请重试。" }
     }
 
     func openInSafari() {
-        guard let url = try? Self.validatedWorkspace(workspace) else { return }
+        guard !busy, let url = try? Self.validatedWorkspace(workspace) else { return }
         UIApplication.shared.open(url)
     }
 
     /// callAsyncJavaScript supplies structured arguments and awaits the IndexedDB
     /// transaction. Native content is retained until a matching durable receipt arrives.
     func transfer(_ item: PendingShare) async -> Bool {
-        guard !transferring else { return false }
-        guard let page = webView.url, sameWorkspace(page), !loading,
+        guard !busy else { return false }
+        guard showingWorkspace, let page = webView.url, sameWorkspace(page), !loading,
               page.path != "/login" && page.path != "/login.html" else {
             status = "请先在工作区完成登录，再打开本机收件箱导入。"
             return false
@@ -160,8 +200,8 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
         }
     }
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { loading = true }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loading = false }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { loading = true; hasLoadedWorkspacePage = false }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loading = false; hasLoadedWorkspacePage = true }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { report(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { report(error) }
     private func report(_ error: Error) {
@@ -172,6 +212,7 @@ final class WorkspaceModel: NSObject, ObservableObject, WKNavigationDelegate, WK
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
+        guard !resettingWorkspace else { decisionHandler(.cancel); return }
         if sameWorkspace(url) { decisionHandler(.allow); return }
         if action.navigationType == .linkActivated && ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
             UIApplication.shared.open(url)

@@ -2,6 +2,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+default_workspace_arguments=()
+if [[ "${CHATGRAPH_DEFAULT_WORKSPACE_URL+x}" == x ]]; then
+  validation_dir="$(mktemp -d)"
+  trap 'rm -rf "$validation_dir"' EXIT
+  swiftc Shared/WorkspaceConfiguration.swift scripts/normalize-workspace.swift -o "$validation_dir/normalize-workspace"
+  default_workspace_authority="$("$validation_dir/normalize-workspace")"
+  default_workspace_arguments+=("CHATGRAPH_DEFAULT_WORKSPACE_AUTHORITY=$default_workspace_authority")
+fi
+
 if ! xcodebuild -version >/dev/null 2>&1; then
   echo "需要安装完整 Xcode，并运行 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer。" >&2
   exit 1
@@ -9,6 +18,7 @@ fi
 
 mode="${1:-unsigned}"
 arguments=(-project ChatGraph.xcodeproj -scheme ChatGraph -configuration Release)
+if [[ ${#default_workspace_arguments[@]} -gt 0 ]]; then arguments+=("${default_workspace_arguments[@]}"); fi
 if [[ -n "${IOS_BUNDLE_ID:-}" ]]; then arguments+=("APP_BUNDLE_IDENTIFIER=$IOS_BUNDLE_ID"); fi
 if [[ -n "${IOS_APP_GROUP_ID:-}" ]]; then arguments+=("APP_GROUP_IDENTIFIER=$IOS_APP_GROUP_ID"); fi
 if [[ -n "${IOS_TEAM_ID:-}" ]]; then arguments+=("DEVELOPMENT_TEAM=$IOS_TEAM_ID"); fi

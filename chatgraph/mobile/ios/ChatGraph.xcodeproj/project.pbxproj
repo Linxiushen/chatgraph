@@ -23,6 +23,12 @@
 			"path" = "Shared/PendingShare.swift";
 			"sourceTree" = "<group>";
 		};
+		"23BED16549844754F851CD33" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Shared/WorkspaceConfiguration.swift";
+			"sourceTree" = "<group>";
+		};
 		"6E363366269B7F2311C26E6C" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -94,6 +100,7 @@
 				"A173C9474164A0B7CC198E91",
 				"CF6F17AA63BD5FDE39DD9139",
 				"59B4BB721862710EE7645030",
+				"23BED16549844754F851CD33",
 				"6E363366269B7F2311C26E6C",
 				"313D9A997EACA7DC482595BC",
 				"7EBC08CDDC8CAD928D77CF9F",
@@ -117,6 +124,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "59B4BB721862710EE7645030";
 		};
+		"E057F99B250C966EF45906D7" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "23BED16549844754F851CD33";
+		};
 		"C7DEC6FCCD74FC72557EBA8A" = {
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = "2147483647";
@@ -124,6 +135,7 @@
 				"3811FE0CEAFBDED5C0ED90FD",
 				"F08123036F509128DA63D4C2",
 				"D85A41B5E4638ABD1B1DDC03",
+				"E057F99B250C966EF45906D7",
 			);
 			"runOnlyForDeploymentPostprocessing" = "0";
 		};
